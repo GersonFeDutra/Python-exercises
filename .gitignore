@@ -1,0 +1,11 @@
+snippets/
+playground/
+docs/
+.vscode/
+*__pycache__/
+CursoemVideo/.idea/
+CursoemVideo/2020/world_1/build/
+*.pdf
+*.zip
+*.mp3
+*.wav
