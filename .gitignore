@@ -1,5 +1,4 @@
 snippets/
-playground/
 docs/
 .vscode/
 *__pycache__/
@@ -9,3 +8,4 @@ CursoemVideo/2020/world_1/build/
 *.zip
 *.mp3
 *.wav
+*.ogg
