@@ -266,9 +266,29 @@ class Atlas(pygame.sprite.Sprite):
 
         self._update_frame()
 
+    def add_spritesheet(self, path: str, h_slice: int = 1, v_slice: int = 1,
+                        coords: tuple[int, int] = VECTOR_ZERO,
+                        sprite_size: tuple[int, int] = None) -> None:
+        texture: pygame.Surface = pygame.image.load(path)
+
+        if sprite_size == None:
+            sprite_size = (texture.get_width() / h_slice,
+                           texture.get_height() / v_slice)
+
+        for i in range(h_slice):
+            for j in range(v_slice):
+                self.textures.append(texture.subsurface(
+                    array(coords) + (i, j) * array(sprite_size), sprite_size))
+
+            if len(self.textures) > 1:
+                self._static = False
+
+            self._update_frame()
+
     def set_textures(self, value: list) -> None:
         self._textures = value
         self._frame = 0
+        self._static = len(self._textures) <= 1
         self._update_frame()
 
     def get_textures(self) -> list:
@@ -383,14 +403,17 @@ class Player(KinematicBody):
 
 # %%
 # Loading Resources
-ASSETS_DIR: str = 'assets'
+ROOT_DIR: str = path.dirname(__file__)
+ASSETS_DIR: str = path.join(ROOT_DIR, 'assets')
+
 SPRITES_DIR: str = path.join(ASSETS_DIR, 'sprites')
 SOUNDS_DIR: str = path.join(ASSETS_DIR, 'sounds')
 SPRITES_SCALE: array = array([2, 2])
 
 # Sprites
 player_sprite: Sprite = Sprite()
-player_sprite.atlas.add_texture(path.join(SPRITES_DIR, 'dino.png'))
+player_sprite.atlas.add_spritesheet(
+    path.join(SPRITES_DIR, 'dino.png'), h_slice=3, sprite_size=(32, 32))
 
 sprites: pygame.sprite.Group = pygame.sprite.Group()
 sprites.add(player_sprite.atlas)
