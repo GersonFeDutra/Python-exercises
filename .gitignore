@@ -10,16 +10,18 @@ CursoemVideo/2020/world_1/build/
 *.wav
 *.ogg
 *.ase
-playground/pygame/assets/sprites/warped_city_2/*
+playground/pygame/hello_pygame/assets/sprites/warped_city_2/*
 
-!playground/pygame/assets/sprites/warped_city_2/Sprites
-playground/pygame/assets/sprites/warped_city_2/Sprites/*
-!playground/pygame/assets/sprites/warped_city_2/Sprites/Player
-playground/pygame/assets/sprites/warped_city_2/Sprites/Player/*
-!playground/pygame/assets/sprites/warped_city_2/Sprites/Player/Idle
+!playground/pygame/hello_pygame/assets/sprites/warped_city_2/Sprites
+playground/pygame/hello_pygame/assets/sprites/warped_city_2/Sprites/*
+!playground/pygame/hello_pygame/assets/sprites/warped_city_2/Sprites/Player
+playground/pygame/hello_pygame/assets/sprites/warped_city_2/Sprites/Player/*
+!playground/pygame/hello_pygame/assets/sprites/warped_city_2/Sprites/Player/Idle
 
-!playground/pygame/assets/sprites/warped_city_2/Environment
-playground/pygame/assets/sprites/warped_city_2/Environment/*
-!playground/pygame/assets/sprites/warped_city_2/Environment/background
-playground/pygame/assets/sprites/warped_city_2/Environment/background/*
-!playground/pygame/assets/sprites/warped_city_2/Environment/background/back.png
+!playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment
+playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment/*
+!playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment/background
+playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment/background/*
+!playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment/background/back.png
+
+!playground/pygame/dino/assets/sounds/*
