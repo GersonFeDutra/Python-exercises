@@ -9,3 +9,10 @@ CursoemVideo/2020/world_1/build/
 *.mp3
 *.wav
 *.ogg
+*.ase
+playground/pygame/assets/sprites/warped_city_2/*
+!playground/pygame/assets/sprites/warped_city_2/Sprites
+playground/pygame/assets/sprites/warped_city_2/Sprites/*
+!playground/pygame/assets/sprites/warped_city_2/Sprites/Player
+playground/pygame/assets/sprites/warped_city_2/Sprites/Player/*
+!playground/pygame/assets/sprites/warped_city_2/Sprites/Player/Idle
