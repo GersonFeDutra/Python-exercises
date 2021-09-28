@@ -1,22 +1,25 @@
 # To add a new cell, type '# %%'
 # To add a new markdown cell, type '# %% [markdown]'
 # %%
-from os import path
-from random import randint
-from numpy import array
-from numpy.linalg import norm
 import pygame
 from pygame import Color
+from pygame import sprite
 from pygame.mixer import Sound
 from pygame.locals import *
-from sys import exit
+from sys import base_prefix, exit
+
+# %%
+# Other imports
+from os import path
+from random import randint, randrange
+from numpy import array
+from numpy.linalg import norm
+from collections import deque
 
 pygame.init()
 clock = pygame.time.Clock()
 
-
 # %%
-# Other imports
 
 # Color Constants
 COLOR_BLACK: Color = Color(0, 0, 0)
@@ -75,16 +78,16 @@ class InputEvent:
 # %%
 class Entity:
     position: array
-    color: pygame.Color = pygame.Color(115, 10, 46)
-    scale: array = VECTOR_ONE
-    anchor: array = array([.5, .5])
+    color: pygame.Color
+    scale: array
+    anchor: array
 
     class SignalNotExists(Exception):
         pass
 
     class Signal:
-        _observers: dict = {}
         owner = None
+        name: str  # Metadata # Apenas para auxiliar no debug
 
         class NotOwner(Exception):
             '''Lançado ao tentar operar o sinal para um objeto que não a pertence'''
@@ -119,14 +122,19 @@ class Entity:
             for observer in self._observers.keys():
                 self._observers[observer](*args)
 
-        def __init__(self, owner) -> None:
+        def __init__(self, owner, name: str) -> None:
             self.owner = owner
+            self.name = name
+            self._observers: dict = {}
 
     def _draw(self) -> pygame.Rect:
-        target_pos: array = self.position - CELL * self.anchor
+        target_pos: array = self.position - self._get_cell() * self.anchor
 
         return pygame.draw.rect(screen, self.color, (
             target_pos[0], target_pos[1], CELL_SIZE * self.scale[0], CELL_SIZE * self.scale[1]))
+
+    def _get_cell(self) -> array:
+        return CELL
 
     def connect(self, signal, observer, method) -> None:
         try:
@@ -147,11 +155,15 @@ class Entity:
         return self.position[1]
 
     def __init__(self, coords: array = VECTOR_ZERO) -> None:
-        self.position = coords
+        self.position = array(coords)
+        self.scale = array(VECTOR_ONE)
+        self.anchor = array([.5, .5])
+        self.color = pygame.Color(115, 10, 46)
 
 
 # %%
 class Node(Entity):
+    collided: Entity.Signal
 
     class EmptyName(Exception):
         pass
@@ -206,16 +218,84 @@ class Node(Entity):
         else:
             return self.position
 
-    def _draw(self, parent_offset: array = VECTOR_ZERO) -> pygame.Rect:
-        target_pos: array = self.position + parent_offset - CELL * self.anchor
+    def _input(self) -> None:
+        pass
 
-        rect: pygame.Rect = pygame.draw.rect(screen, self.color, (
+    def _draw(self, target_pos: array) -> pygame.Rect:
+        return pygame.draw.rect(screen, self.color, (
             target_pos[0], target_pos[1], CELL_SIZE * self.scale[0], CELL_SIZE * self.scale[1]))
 
-        for child in self._children_index:
-            rect.union(child._draw(target_pos))
+    def _propagate(self, parent_offset: array = VECTOR_ZERO) -> dict:
+        target_pos: array = self.position + parent_offset - self._get_cell() * \
+            self.anchor
+        physics_server: dict
+        children_data: list[dict] = []
 
-        return rect
+        self._input()
+        rect: pygame.Rect = self._draw(target_pos)
+        self._subpropagate()
+
+        for child in self._children_index:
+            child_data: dict = child._propagate(target_pos)
+            rect.union(child_data['rect'])
+            children_data.append(child_data)
+
+        Node._check_collisions(children_data)
+        physics_server = {
+            'head': self,
+            'rect': rect,
+            'children_data': children_data
+        }
+
+        return physics_server
+
+    def _subpropagate(self):
+        pass
+
+    # Algoritmo iterativo que checa as colisões nos nós folhas.
+    @staticmethod
+    def _check_collisions(child_data: list[dict]) -> None:
+        next_children: deque[dict[str, list]] = deque()
+
+        children_n: int = len(child_data)
+        for i in range(children_n):
+            for j in range(i + 1, children_n):
+                Node._check_collision(
+                    child_data[i], child_data[j], next_children)
+
+        while next_children:
+            next: dict = next_children.popleft()
+
+            for a in next['a']:
+                for b in next['b']:
+                    Node._check_collision(a, b, next_children)
+
+    def _check_collision(a: dict, b: dict, next_children: deque[dict[str, list]]) -> None:
+
+        if a['rect'].colliderect(b['rect']):
+            is_all_leaf: bool = True
+
+            # Se o nó tiver filhos, fazemos a verificação entre eles e o outro nó colisor.
+            if a['children_data']:
+                next_children.append({
+                    'a': a['children_data'],
+                    'b': [b],
+                })
+                is_all_leaf = False
+
+            elif b['children_data']:
+                next_children.append({
+                    'a': [a],
+                    'b': b['children_data']
+                })
+                is_all_leaf = False
+
+            if is_all_leaf:
+                node_a: Node = a['head']
+                node_b: Node = b['head']
+                node_a.collided.emit(node_b)
+                node_b.collided.emit(node_a)
+                # Quando houver colisão nas folhas, o sinal `collided` é emitido para cada colisor.
 
     def __init__(self, name: str = 'Node', coords: array = VECTOR_ZERO) -> None:
         super().__init__(coords=coords)
@@ -228,10 +308,12 @@ class Node(Entity):
         self._children_refs: dict = {}
         self._parent = None
 
+        self.collided = Entity.Signal(self, 'collided')
+
 
 # %%
 class Atlas(pygame.sprite.Sprite):
-    base_size: array = array([0, 0])
+    base_size: array
     _static: bool = True
     _speed: float = 0.06
     _current_time: float = 0.0
@@ -266,12 +348,11 @@ class Atlas(pygame.sprite.Sprite):
 
         self._update_frame()
 
-    def add_spritesheet(self, path: str, h_slice: int = 1, v_slice: int = 1,
+    def add_spritesheet(self, texture: pygame.Surface, h_slice: int = 1, v_slice: int = 1,
                         coords: tuple[int, int] = VECTOR_ZERO,
                         sprite_size: tuple[int, int] = None) -> None:
-        texture: pygame.Surface = pygame.image.load(path)
 
-        if sprite_size == None:
+        if sprite_size is None:
             sprite_size = (texture.get_width() / h_slice,
                            texture.get_height() / v_slice)
 
@@ -284,6 +365,12 @@ class Atlas(pygame.sprite.Sprite):
                 self._static = False
 
             self._update_frame()
+
+    def load_spritesheet(self, path: str, h_slice: int = 1, v_slice: int = 1,
+                         coords: tuple[int, int] = VECTOR_ZERO,
+                         sprite_size: tuple[int, int] = None) -> None:
+        self.add_spritesheet(pygame.image.load(
+            path), h_slice=h_slice, v_slice=v_slice, coords=coords, sprite_size=sprite_size)
 
     def set_textures(self, value: list) -> None:
         self._textures = value
@@ -310,6 +397,7 @@ class Atlas(pygame.sprite.Sprite):
         super().__init__()
         self._frame: int = 0
         self._textures: list = []
+        self.base_size = array([0, 0])
 
     frame: property = property(get_frame, set_frame)
     textures: property = property(get_textures, set_textures)
@@ -317,44 +405,33 @@ class Atlas(pygame.sprite.Sprite):
 
 # %%
 class Sprite(Node):
-    atlas: Atlas = Atlas()
+    atlas: Atlas
 
-    def _draw(self, parent_offset: array = VECTOR_ZERO) -> pygame.Rect:
+    def _draw(self, target_pos: array = VECTOR_ZERO) -> pygame.Rect:
         self.atlas.image = pygame.transform.scale(
             self.atlas.image, (self.atlas.base_size * self.scale).astype('int'))
-
-        target_pos: array = self.position + parent_offset - \
-            array(self.atlas.image.get_size()) * self.anchor
 
         self.atlas.rect.topleft = target_pos
         rect: pygame.Rect = self.atlas.rect.copy()
 
-        for child in self._children_index:
-            rect.union(child._draw(target_pos))
-
         return rect
+
+    def _get_cell(self) -> array:
+        return array(self.atlas.image.get_size())
+
+    def __init__(self, name: str = 'Node', coords: array = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+        self.atlas = Atlas()
 
 
 # %%
 class KinematicBody(Node):
-    speed: float = 1.0
-    velocity: array = array([0.0, 0.0])
 
-    def move(self) -> None:
-        position: list = [self.position[0], self.position[1]]
+    def _subpropagate(self) -> None:
+        self._physics_process()
 
-        for i in range(2):
-            position[i] += self.velocity[i] * self.speed
-
-            if position[i] < 0.0:
-                position[i] = 0.0
-            elif position[i] > SCREEN_SIZE[i]:
-                position[i] = SCREEN_SIZE[i]
-
-        self.position = array(position)
-
-    def _input(self) -> None:
-        self.velocity = InputEvent.get_input_strength()
+    def _physics_process(self) -> None:
+        pass
 
     # def _input_event(self, event: InputEvent) -> None:
     #     pass
@@ -384,6 +461,24 @@ class Label(Entity):
 # %%
 class Player(KinematicBody):
     points_changed: Entity.Signal
+    speed: float = 1.0
+    velocity: array
+
+    def _physics_process(self) -> None:
+        position: list = [self.position[0], self.position[1]]
+
+        for i in range(2):
+            position[i] += self.velocity[i] * self.speed
+
+            if position[i] < 0.0:
+                position[i] = 0.0
+            elif position[i] > SCREEN_SIZE[i]:
+                position[i] = SCREEN_SIZE[i]
+
+        self.position = array(position)
+
+    def _input(self) -> None:
+        self.velocity = InputEvent.get_input_strength()
 
     def set_points(self, value) -> None:
         self._points = value
@@ -396,9 +491,62 @@ class Player(KinematicBody):
                  color: Color = (15, 92, 105)) -> None:
         super().__init__(name, coords=coords, color=color)
         self._points: int = 0
-        self.points_changed = Entity.Signal(self)
+        self.points_changed = Entity.Signal(self, 'points_changed')
+        self.velocity = array([0.0, 0.0])
 
     points: property = property(get_points, set_points)
+
+
+# %%
+# Game Nodes
+class Clouds(KinematicBody):
+
+    def _physics_process(self) -> None:
+        self.position[0] = self.position[0] - 1
+        width: int = self._get_cell()[0] // 2
+
+        for child in self._children_index:
+            width += child._get_cell()[0]
+
+        if self.position[0] < -width:
+            self.position[0] = WIDTH
+
+            for child in self._children_index:
+                child.position = randrange(
+                    50, 200, 100), randrange(50, 200, 50)
+
+    def _spawn_clouds(self, group: pygame.sprite.Group) -> None:
+
+        for i in range(1, 5):
+            cloud: Sprite = Sprite(name=f'Cloud{i}', coords=(
+                randrange(50, 200, 100), randrange(50, 200, 50)))
+            cloud.atlas.add_spritesheet(spritesheet, coords=(
+                sprite_size[0] * 7, 0), sprite_size=sprite_size)
+            cloud.scale = array([3, 3])
+            group.add(cloud.atlas)
+            self.add_child(cloud)
+
+    def __init__(self, group: pygame.sprite.Group, name: str = 'Clouds', coords: array = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+        self._spawn_clouds(group)
+
+
+class Spawn(Node):
+    collected: Node.Signal
+
+    def _on_Collided(self, node: Node) -> None:
+        if not (node._parent.name == 'Player'):
+            return
+        player: Player = node._parent
+        player.points += 1
+        self.collected.emit()
+        self.position = randint(0, WIDTH), randint(0, HEIGHT)
+
+    def __init__(self, name: str = 'Spawn',
+                 coords: array = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+        self.connect(self.collided, self, self._on_Collided)
+        self.collected = Node.Signal(self, 'collected')
 
 
 # %%
@@ -408,34 +556,46 @@ ASSETS_DIR: str = path.join(ROOT_DIR, 'assets')
 
 SPRITES_DIR: str = path.join(ASSETS_DIR, 'sprites')
 SOUNDS_DIR: str = path.join(ASSETS_DIR, 'sounds')
-SPRITES_SCALE: array = array([2, 2])
+SPRITES_SCALE: array = array([3, 3])
 
 # Sprites
+sprite_size: array = array([32, 32])
+spritesheet: pygame.Surface = pygame.image.load(
+    path.join(SPRITES_DIR, 'dino.png'))
 player_sprite: Sprite = Sprite()
 player_sprite.atlas.add_spritesheet(
-    path.join(SPRITES_DIR, 'dino.png'), h_slice=3, sprite_size=(32, 32))
+    spritesheet, h_slice=3, sprite_size=sprite_size)
+player_sprite.scale = SPRITES_SCALE
 
 sprites: pygame.sprite.Group = pygame.sprite.Group()
 sprites.add(player_sprite.atlas)
-player_sprite.scale = SPRITES_SCALE
 
 # Sound Streams
 death_sfx: Sound = Sound(path.join(SOUNDS_DIR, 'death.wav'))
 jump_sfx: Sound = Sound(path.join(SOUNDS_DIR, 'jump.wav'))
 score_sfx: Sound = Sound(path.join(SOUNDS_DIR, 'score.wav'))
 
-
 # %%
 # Entities
-player: Player = Player(coords=(WIDTH // 2, HEIGHT // 2))
-entity: Entity = Entity((randint(0, WIDTH), randint(0, HEIGHT)))
 label: Label = Label((450, 40))
 
 label.text = 'Points: 0'
 label.color = COLOR_BLACK
-player.connect(player.points_changed, label, label.set_text)
+
+# Construção da árvore
+root: Node = Node(name='root')
+spawn: Spawn = Spawn(coords=(randint(0, WIDTH), randint(0, HEIGHT)))
+player: Player = Player(coords=(WIDTH // 2, HEIGHT // 2))
+clouds: Clouds = Clouds(sprites, coords=(0, 50))
 player.add_child(player_sprite)
-# bg_mirror_pos: array = (bg.get_width(), 0)
+root.add_child(spawn)
+root.add_child(player)
+root.add_child(clouds)
+root.color = Color(66, 26, 135)
+
+# Conexões
+spawn.connect(spawn.collected, score_sfx, score_sfx.play)
+player.connect(player.points_changed, label, label.set_text)
 
 while True:
     clock.tick(FIXED_FPS)
@@ -454,17 +614,9 @@ while True:
 #                     player._input_event(
 #                         InputEvent.InputTypes.JUST_PRESSED, key)
 
-    player._input()
-    player.move()
-    body_aabb = player._draw()
-    entity_aabb = entity._draw()
+    root._propagate()
     sprites.draw(screen)
     sprites.update()
     screen.blit(label._draw(), label.position)
-
-    if body_aabb.colliderect(entity_aabb):
-        entity.position = (randint(0, WIDTH), randint(0, HEIGHT))
-        player.points += 1
-        score_sfx.play()
 
     pygame.display.update()
