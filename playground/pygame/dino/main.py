@@ -26,7 +26,7 @@ COLOR_BLACK: Color = Color(0, 0, 0)
 COLOR_WHITE: Color = Color(255, 255, 255)
 
 # Game Constants
-CELL_SIZE: int = 40
+CELL_SIZE: int = 32
 CELL: array = array([CELL_SIZE, CELL_SIZE])
 
 
@@ -233,12 +233,8 @@ class Node(Entity):
 
         self._input()
         rect: pygame.Rect = self._draw(target_pos)
-        self._subpropagate()
-
-        for child in self._children_index:
-            child_data: dict = child._propagate(target_pos)
-            rect.union(child_data['rect'])
-            children_data.append(child_data)
+        self._process()
+        self._subpropagate(target_pos, rect, children_data)
 
         Node._check_collisions(children_data)
         physics_server = {
@@ -249,7 +245,14 @@ class Node(Entity):
 
         return physics_server
 
-    def _subpropagate(self):
+    def _subpropagate(self, target_pos: array, rect: pygame.Rect, children_data: list[dict]):
+
+        for child in self._children_index:
+            child_data: dict = child._propagate(target_pos)
+            rect.union(child_data['rect'])
+            children_data.append(child_data)
+
+    def _process(self):
         pass
 
     # Algoritmo iterativo que checa as colisões nos nós folhas.
@@ -425,9 +428,12 @@ class Sprite(Node):
 
 
 # %%
+# TODO -> Make Parallax Background using Surfaces
+
+# %%
 class KinematicBody(Node):
 
-    def _subpropagate(self) -> None:
+    def _process(self) -> None:
         self._physics_process()
 
     def _physics_process(self) -> None:
@@ -499,36 +505,70 @@ class Player(KinematicBody):
 
 # %%
 # Game Nodes
-class Clouds(KinematicBody):
+class Clouds(Node):
 
-    def _physics_process(self) -> None:
-        self.position[0] = self.position[0] - 1
-        width: int = self._get_cell()[0] // 2
+    def rearrange(self) -> Node:
 
         for child in self._children_index:
-            width += child._get_cell()[0]
+            child.position = randrange(50, 200, 100), randrange(50, 200, 50)
 
-        if self.position[0] < -width:
-            self.position[0] = WIDTH
-
-            for child in self._children_index:
-                child.position = randrange(
-                    50, 200, 100), randrange(50, 200, 50)
-
-    def _spawn_clouds(self, group: pygame.sprite.Group) -> None:
+    def _spawn_clouds(self) -> None:
+        global spritesheet, sprites, sprite_size, SPRITES_SCALE
 
         for i in range(1, 5):
             cloud: Sprite = Sprite(name=f'Cloud{i}', coords=(
                 randrange(50, 200, 100), randrange(50, 200, 50)))
             cloud.atlas.add_spritesheet(spritesheet, coords=(
                 sprite_size[0] * 7, 0), sprite_size=sprite_size)
-            cloud.scale = array([3, 3])
-            group.add(cloud.atlas)
+            cloud.scale = SPRITES_SCALE
+            sprites.add(cloud.atlas)
             self.add_child(cloud)
 
-    def __init__(self, group: pygame.sprite.Group, name: str = 'Clouds', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Clouds',
+                 coords: array = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
-        self._spawn_clouds(group)
+        self._spawn_clouds()
+
+class Floor(Node):
+
+    def _spawn_floor(self) -> None:
+        global spritesheet, sprites, sprite_size, SPRITES_SCALE
+
+        for i in range(WIDTH // CELL_SIZE):
+            piece: Sprite = Sprite(name=f'Piece{i}', coords=array(
+                [(CELL_SIZE * SPRITES_SCALE[0]) * i - WIDTH, HEIGHT - CELL_SIZE]))
+            piece.atlas.add_spritesheet(spritesheet, coords=(
+                sprite_size[0] * 6, 0), sprite_size=sprite_size)
+            piece.scale = SPRITES_SCALE
+            sprites.add(piece.atlas)
+            self.add_child(piece)
+
+    def __init__(self, name: str = 'Floor', coords: array = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+        self.anchor = [0.0, 0.0]
+        self._spawn_floor()
+
+
+class BackGround(Node):
+    clouds: Clouds
+    scroll_speed: int
+
+    def _process(self) -> None:
+        global SPRITES_SCALE
+        
+        self.position[0] = self.position[0] - self.scroll_speed
+
+        if self.position[0] < -(WIDTH // 2):
+            self.position[0] = WIDTH
+            self.clouds.rearrange()
+
+    def __init__(self, scroll_speed: int = 1, name: str = 'Node', coords: array = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+        self.scroll_speed = scroll_speed
+        self.anchor = [0.0, 0.0]
+        self.clouds = Clouds(coords=(0, 50))
+        self.add_child(Floor())
+        self.add_child(self.clouds)
 
 
 class Spawn(Node):
@@ -584,13 +624,13 @@ label.color = COLOR_BLACK
 
 # Construção da árvore
 root: Node = Node(name='root')
+bg: BackGround = BackGround(3)
 spawn: Spawn = Spawn(coords=(randint(0, WIDTH), randint(0, HEIGHT)))
 player: Player = Player(coords=(WIDTH // 2, HEIGHT // 2))
-clouds: Clouds = Clouds(sprites, coords=(0, 50))
 player.add_child(player_sprite)
+root.add_child(bg)
 root.add_child(spawn)
 root.add_child(player)
-root.add_child(clouds)
 root.color = Color(66, 26, 135)
 
 # Conexões
