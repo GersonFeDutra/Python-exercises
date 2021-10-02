@@ -56,23 +56,23 @@ VECTOR_ONE: array = array([1.0, 1.0])
 
 
 # %%
+def lerp(_from_: float, _to_: float, _delta_: float) -> float:
+    '''Realiza uma interpolação linear de `_from_` para `_to_` em termos de `_delta_`.'''
+    return (_from_ - _to_) * _delta_
+
+
+# %%
 class InputEvent:
+    input_type: int
+    key: int
+    tag: str
+    target: object
 
-    def get_input_strength() -> array:
-        is_pressed = pygame.key.get_pressed()
-        keys: dict = {K_w: 0.0, K_a: 0.0, K_s: 0.0, K_d: 0.0}
-        strength: array
-
-        for key in keys:
-            keys[key] = 1.0 if is_pressed[key] else 0.0
-
-        strength = array([keys[K_d] - keys[K_a], keys[K_s] - keys[K_w]])
-        strength_norm = norm(strength)
-
-        if strength_norm:
-            strength /= strength_norm
-
-        return strength
+    def __init__(self, input_type: int, key: int, tag: str, target) -> None:
+        self.type = input_type
+        self.key = key
+        self.tag = tag
+        self.target = target
 
 
 # %%
@@ -221,6 +221,9 @@ class Node(Entity):
     def _input(self) -> None:
         pass
 
+    def _input_event(self, event: InputEvent) -> None:
+        pass
+
     def _draw(self, target_pos: array) -> pygame.Rect:
         return pygame.draw.rect(screen, self.color, (
             target_pos[0], target_pos[1], CELL_SIZE * self.scale[0], CELL_SIZE * self.scale[1]))
@@ -312,6 +315,76 @@ class Node(Entity):
         self._parent = None
 
         self.collided = Entity.Signal(self, 'collided')
+
+
+# %%
+class Input:
+    _instance = None
+    events: dict = {}
+
+    class NotANode(Exception):
+        '''Lançado ao tentar registrar um evento em um objeto que não e do tipo `Node`.'''
+        pass
+
+    def register_event(self, to: Node, input_type: int, key: int, tag: str = "") -> None:
+
+        if not isinstance(to, Node):
+            raise Input.NotANode
+
+        event_type: dict = self.events.get(input_type)
+        if not event_type:
+            event_type = {}
+            self.events[input_type] = event_type
+
+        event_key: list = event_type.get(key)
+        if not event_key:
+            event_key = []
+            event_type[key] = event_key
+
+        event_key.append(InputEvent(input_type, key, tag, to))
+
+    def get_input_strength() -> array:
+        is_pressed = pygame.key.get_pressed()
+        keys: dict = {K_w: 0.0, K_a: 0.0, K_s: 0.0, K_d: 0.0}
+        strength: array
+
+        for key in keys:
+            keys[key] = 1.0 if is_pressed[key] else 0.0
+
+        strength = array([keys[K_d] - keys[K_a], keys[K_s] - keys[K_w]])
+        strength_norm = norm(strength)
+
+        if strength_norm:
+            strength /= strength_norm
+
+        return strength
+
+    def _tick(self) -> None:
+
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                exit()
+
+            event_type: dict = self.events.get(event.type, False)
+            if not event_type:
+                continue
+
+            event_key: list = event_type.get(event.key)
+            if not event_key:
+                continue
+
+            for event in event_key:
+                node: Node = event.target
+                node._input_event(event)
+
+    def __new__(cls):
+        # Torna a classe em uma Singleton
+        if cls._instance is None:
+            # Criação do objeto
+            cls._instance = super(Input, cls).__new__(cls)
+
+        return cls._instance
 
 
 # %%
@@ -466,25 +539,57 @@ class Label(Entity):
 
 # %%
 class Player(KinematicBody):
+    JUMP: str = "jump"
+    GRAVITY: float = 0.1
+    _velocity: array
+    _jump_strength: float = 0.0
+    _floor: float
+
     points_changed: Entity.Signal
     speed: float = 1.0
-    velocity: array
+    jump_force: float = 5.0
 
     def _physics_process(self) -> None:
-        position: list = [self.position[0], self.position[1]]
+        self.position = array(
+            [self._run(self.position[0]), self._jump(self.position[1])], dtype=int)
 
-        for i in range(2):
-            position[i] += self.velocity[i] * self.speed
+    def _run(self, x: float) -> float:
+        x += self._velocity[0] * self.speed
 
-            if position[i] < 0.0:
-                position[i] = 0.0
-            elif position[i] > SCREEN_SIZE[i]:
-                position[i] = SCREEN_SIZE[i]
+        if x < 0.0:
+            x = 0.0
+        elif x > SCREEN_SIZE[0]:
+            x = SCREEN_SIZE[0]
+        
+        return x
 
-        self.position = array(position)
+    def _jump(self, y: float) -> float:
+        
+        if y < self._floor:
+            # Aplicação da gravidade quando não está no chão
+            self._velocity[1] -= self.GRAVITY
+        
+        y = min((y - self._velocity[1], self._floor))
+        self._velocity[1] += self._jump_strength * 0.1
+
+        if self._jump_strength > 0.0:
+            # WATCH
+            self._jump_strength = max((self._jump_strength - lerp(
+                self._jump_strength, 0.0, self.GRAVITY), 0.0))
+
+            if self._jump_strength < 0.2:
+                self._jump_strength = 0.0
+
+        return y
 
     def _input(self) -> None:
-        self.velocity = InputEvent.get_input_strength()
+        self._velocity[0] = Input.get_input_strength()[0]
+
+    def _input_event(self, event: InputEvent) -> None:
+
+        if event.tag is self.JUMP and self.position[1] >= self._floor:
+            self._velocity[1] -= self._velocity[1] # Reseta a velocidade com o impulso do pulo
+            self._jump_strength = self.jump_force
 
     def set_points(self, value) -> None:
         self._points = value
@@ -495,10 +600,14 @@ class Player(KinematicBody):
 
     def __init__(self, name: str = 'Player', coords: tuple = VECTOR_ZERO,
                  color: Color = (15, 92, 105)) -> None:
+        global _input
         super().__init__(name, coords=coords, color=color)
+
         self._points: int = 0
         self.points_changed = Entity.Signal(self, 'points_changed')
-        self.velocity = array([0.0, 0.0])
+        self._velocity = array([0.0, 0.0])
+        _input.register_event(self, KEYDOWN, K_SPACE, self.JUMP)
+        self._floor = self.position[1]
 
     points: property = property(get_points, set_points)
 
@@ -529,6 +638,7 @@ class Clouds(Node):
         super().__init__(name=name, coords=coords)
         self._spawn_clouds()
 
+
 class Floor(Node):
 
     def _spawn_floor(self) -> None:
@@ -555,7 +665,7 @@ class BackGround(Node):
 
     def _process(self) -> None:
         global SPRITES_SCALE
-        
+
         self.position[0] = self.position[0] - self.scroll_speed
 
         if self.position[0] < -(WIDTH // 2):
@@ -616,6 +726,9 @@ jump_sfx: Sound = Sound(path.join(SOUNDS_DIR, 'jump.wav'))
 score_sfx: Sound = Sound(path.join(SOUNDS_DIR, 'score.wav'))
 
 # %%
+# Singletons
+_input: Input = Input()
+
 # Entities
 label: Label = Label((450, 40))
 
@@ -626,7 +739,8 @@ label.color = COLOR_BLACK
 root: Node = Node(name='root')
 bg: BackGround = BackGround(3)
 spawn: Spawn = Spawn(coords=(randint(0, WIDTH), randint(0, HEIGHT)))
-player: Player = Player(coords=(WIDTH // 2, HEIGHT // 2))
+player: Player = Player(coords=(WIDTH // 2, HEIGHT - CELL_SIZE * SPRITES_SCALE[1] - 3))
+player.anchor = 0.0, 0.0
 player.add_child(player_sprite)
 root.add_child(bg)
 root.add_child(spawn)
@@ -640,23 +754,19 @@ player.connect(player.points_changed, label, label.set_text)
 while True:
     clock.tick(FIXED_FPS)
     screen.fill(COLOR_WHITE)
+    # Preenche a tela
 
-    for event in pygame.event.get():
-        if event.type == QUIT:
-            pygame.quit()
-            exit()
-
-#         if event.type == KEYDOWN:
-#             keys: list = [K_w, K_a, K_s, K_d]
-#
-#             for key in keys:
-#                 if event.key == key:
-#                     player._input_event(
-#                         InputEvent.InputTypes.JUST_PRESSED, key)
+    _input._tick()
+    # Propaga as entradas
 
     root._propagate()
+    # Propaga o processamento
+
     sprites.draw(screen)
     sprites.update()
+    # Desenha os sprites
+
     screen.blit(label._draw(), label.position)
+    # Desenha a GUI
 
     pygame.display.update()
