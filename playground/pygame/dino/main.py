@@ -280,7 +280,7 @@ class Node(Entity):
     def add_child(self, node, at: int = -1) -> None:
         '''Registra um nó na árvore como filho do nó atual.'''
         if node == self or node._parent:
-            raise Entity.InvalidChild
+            raise Node.InvalidChild
 
         if self._children_refs.get(node.name, False):
             raise Node.DuplicatedChild
@@ -659,6 +659,8 @@ class ParallaxBackground(Node):
 '''
 
 # %%
+
+
 class Shape(Node):
     '''Nó que representa uma forma usada em cálculos de colisão.
     Deve ser adicionada como filha de um `KinematicBody`.'''
@@ -833,23 +835,49 @@ class KinematicBody(Node):
 
 
 # %%
-class Label(Entity):
-    '''Entidade usada para apresentar texto na tela.'''
+class Label(Node):
+    '''Nó usado para apresentar texto na tela.'''
     font: pygame.font.Font = pygame.font.SysFont('roboto', 40, False, False)
-    text: str = ''
 
     def set_text(self, value: str) -> None:
-        self.text = value
+        self._text = value
+        self._surface = self.update_surface
+
+    def get_text(self) -> None:
+        return self._text
+
+    def get_surface(self) -> Surface:
+        return self._current_surface
+
+    def update_surface(self) -> Surface:
+        self._current_surface = self.font.render(self.text, True, self.color)
+        self._surface = self.get_surface
+
+        return self._current_surface
 
     def _draw(self, target_pos: tuple[int, int] = None, target_scale: tuple[float, float] = None,
-              offset: tuple[int, int] = None) -> Surface:
-        super()._draw(target_pos=target_pos, target_scale=target_scale, offset=offset)
+              offset: tuple[int, int] = None) -> None:
+        global render_queue
 
-        return self.font.render(self.text, True, self.color)
+        super()._draw(target_pos, target_scale, offset)
+        render_queue.append(
+            (self._surface(), target_pos - offset))
 
-    def __init__(self, coords: tuple[int, int] = VECTOR_ZERO, color: Color = COLOR_WHITE) -> None:
-        super().__init__(coords=coords)
+    def get_cell(self) -> tuple[int, int]:
+        return self._surface().get_size()
+
+    def __init__(self, name: str = 'Label', coords: tuple[int, int] = VECTOR_ZERO,
+                 color: Color = COLOR_WHITE, text: str = '') -> None:
+        super().__init__(name=name, coords=coords)
         self.color = color
+        self.anchor = array(TOP_LEFT)
+
+        self._current_surface: Surface
+        self._surface: Callable = self.update_surface
+        self._text: str
+        self.set_text(text)
+
+    text: property = property(get_text, set_text)
 
 
 # %%
@@ -1073,15 +1101,30 @@ class Player(KinematicBody):
     JUMP: str = "jump"
     GRAVITY: float = 0.1
 
+    points_changed: Entity.Signal
+    scored: Entity.Signal
+    died: Entity.Signal
+
     _velocity: array
     _jump_strength: float = 0.0
     _floor: float
+    _start_position: tuple[int, int]
 
     was_collided: bool = False
-    points_changed: Entity.Signal
     speed: float = 1.0
     jump_force: float = 5.0
     sprite: Sprite
+
+    def _process(self) -> None:
+        global score_sfx
+
+        self.points += 1
+
+        if self.points % 500 == 0:
+            score_sfx.play()
+            self.scored.emit()
+
+        super()._process()
 
     def _physics_process(self) -> None:
         self._move_()
@@ -1158,6 +1201,12 @@ class Player(KinematicBody):
             self.sprite.atlas.is_paused = True
             death_sfx.play()
             self.was_collided = True
+            self.died.emit()
+
+    def _on_Game_resumed(self) -> None:
+        self.was_collided = False
+        self.position = self._start_position
+        self.sprite.atlas.is_paused = False
 
     def set_points(self, value) -> None:
         self._points = value
@@ -1168,15 +1217,15 @@ class Player(KinematicBody):
 
     def __init__(self, name: str = 'Player', coords: tuple[int, int] = VECTOR_ZERO,
                  color: Color = (15, 92, 105)) -> None:
-        global _input, spritesheet, root, SPRITE_SIZE, SPRITES_SCALE, PLAYER_GROUP
+        global root, _input, spritesheet, root, SPRITE_SIZE, SPRITES_SCALE, PLAYER_GROUP
         super().__init__(name, coords=coords, color=color)
 
         self.scale = array(SPRITES_SCALE)
         self._points: int = 0
-        self.points_changed = Entity.Signal(self, 'points_changed')
 
         self._velocity = array([0.0, 0.0])
         self._floor = self.position[Y]
+        self._start_position = coords
 
         _input.register_event(self, KEYDOWN, K_SPACE, self.JUMP)
         self.collided.connect(self, self, self._on_Body_collided)
@@ -1190,14 +1239,19 @@ class Player(KinematicBody):
         root.add_to_group(self, PLAYER_GROUP)
         self.add_child(sprite)
 
-        # sprites_groups[ENEMY_GROUP].remove()
-
         # Set the Shape
         shape: Shape = Shape()
         rect: Rect = Rect(sprite.atlas.rect)
         rect.size -= array([16, 16])
         shape.rect = rect
         self.add_child(shape)
+
+        # Signals
+        self.points_changed = Entity.Signal(self, 'points_changed')
+        self.scored = Entity.Signal(self, 'scored')
+        self.died = Entity.Signal(self, 'died')
+
+        # Connections
 
         # Shift methods when testing
         self._move_: Callable
@@ -1263,6 +1317,9 @@ class BackGround(Node):
     clouds: Clouds
     scroll_speed: int
 
+    def speed_up(self) -> None:
+        self.scroll_speed += 1
+
     def _process(self) -> None:
         global SPRITES_SCALE
 
@@ -1301,14 +1358,27 @@ class Spawn(KinematicBody):
 '''
 
 
-class Cactus(KinematicBody):
-    '''Objeto único de jogo. Objeto que pode colidir com o personagem protagonista.'''
+class Runner(KinematicBody):
     speed: float = 1.0
-    sprite: Sprite
     notifier: VisibilityNotifier
 
     def _physics_process(self) -> None:
-        self.position[X] -= int(self.speed)
+        edge: int = self.sprite.get_cell()[X] * self.scale[X]
+        self.position[X] = (self.position[X] -
+                            int(self.speed) + edge) % (WIDTH + edge * 2) - edge
+
+    def __init__(self, name: str = 'Runner', coords: tuple[int, int] = VECTOR_ZERO, color: Color = Color(46, 10, 115)) -> None:
+        super().__init__(name=name, coords=coords, color=color)
+
+        # Set the VisibilityNotifier
+        notifier: VisibilityNotifier = VisibilityNotifier()
+        self.notifier = notifier
+        self.add_child(notifier)
+
+
+class Cactus(Runner):
+    '''Objeto único de jogo. Objeto que pode colidir com o personagem protagonista.'''
+    sprite: Sprite
 
     def __init__(self, name: str = 'Cactus', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         global spritesheet, sprites_groups, root, SPRITES_SCALE, ENEMY_GROUP
@@ -1324,30 +1394,17 @@ class Cactus(KinematicBody):
         self.sprite = sprite
         self.add_child(sprite)
 
-        # Set the notifier
-        notifier: VisibilityNotifier = VisibilityNotifier()
-        self.notifier = notifier
-        self.add_child(notifier)
-
         # Set the shape
         shape: Shape = Shape()
         rect: Rect = Rect(sprite.atlas.rect)
         rect.size = rect.size - array([16, 8])
         shape.rect = rect
         self.add_child(shape)
+        self.notifier.rect = Rect((0, 0), rect.size + array([6, 6]))
 
-        notifier.rect = Rect((0, 0), rect.size + array([6, 6]))
 
-
-class PteroDino(KinematicBody):
-    speed: float = 1.0
+class PteroDino(Runner):
     sprite: Sprite
-    notifier: VisibilityNotifier
-
-    def _physics_process(self) -> None:
-        edge: int = self.sprite.get_cell()[X] * self.scale[X]
-        self.position[X] = (self.position[X] -
-                            int(self.speed) + edge) % (WIDTH + edge * 2) - edge
 
     def _on_Game_pause_toggled(self, paused: bool = False) -> None:
         self.sprite.atlas.is_paused = paused
@@ -1357,6 +1414,7 @@ class PteroDino(KinematicBody):
         super().__init__(name=name, coords=coords, color=color)
         global spritesheet, sprites_groups, root, SPRITES_SCALE, SPRITE_SIZE, ENEMY_GROUP
         self.scale = array(SPRITES_SCALE)
+        self.notifier.rect = Rect((0, 0), (24, 20))
 
         # Set the Sprite
         sprite: Sprite = Sprite()
@@ -1366,12 +1424,6 @@ class PteroDino(KinematicBody):
         self.sprite = sprite
         root.add_to_group(self, ENEMY_GROUP)
         self.add_child(sprite)
-
-        # Set the VisibilityNotifier
-        notifier: VisibilityNotifier = VisibilityNotifier()
-        notifier.rect = Rect((0, 0), (24, 20))
-        self.notifier = notifier
-        self.add_child(notifier)
 
         # Set the Shape
         shape: Shape = Shape()
@@ -1386,17 +1438,23 @@ class PteroDino(KinematicBody):
 
 class Spawner(Node):
     '''Objeto único de jogo. Nó responsável pela aparição de obstáculos na tela.'''
+    current_speed: int
     cactus: Cactus = None
     pterodino: PteroDino = None
     spawns: list[Node] = None
 
-    def _process(self):
-        if self.cactus.position[X] < -WIDTH // 2:
-            self.cactus.position[X] = WIDTH + randint(0, WIDTH)
+    def _on_Game_resumed(self) -> None:
+
+        for child in self._children_index:
+            child.position[X] = self._SPAWN_POS
 
     def set_speed(self, value: float) -> None:
+        self.current_speed = value
         self.cactus.speed = value
         self.pterodino.speed = value
+
+    def speed_up(self) -> None:
+        self.set_speed(self.current_speed + 1)
 
     def _on_Notifier_screen_exited(self, node: Node) -> None:
         self.remove_child(node)
@@ -1407,12 +1465,12 @@ class Spawner(Node):
         notifier: VisibilityNotifier
 
         self.cactus = Cactus(
-            coords=(WIDTH + randint(0, WIDTH), FLOOR_COORD + CELL_SIZE // 2))
+            coords=(self._SPAWN_POS, FLOOR_COORD + CELL_SIZE // 2))
         notifier = self.cactus.notifier
         notifier.connect(notifier.screen_exited, self,
                          self._on_Notifier_screen_exited, self.cactus)
 
-        self.pterodino = PteroDino(coords=(WIDTH, HEIGHT // 2))
+        self.pterodino = PteroDino(coords=(self._SPAWN_POS, HEIGHT // 2 + 100))
         notifier = self.pterodino.notifier
         notifier.connect(notifier.screen_exited, self,
                          self._on_Notifier_screen_exited, self.pterodino)
@@ -1420,10 +1478,44 @@ class Spawner(Node):
         self.spawns = [self.cactus, self.pterodino]
         self.add_child(choice(self.spawns))
 
-    def __init__(self, name: str = 'Spawner', coords: tuple[int, int] = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Spawner', coords: tuple[int, int] = VECTOR_ZERO, speed: int = 1) -> None:
+        global root
         super().__init__(name=name, coords=coords)
+
+        self._SPAWN_POS: int = WIDTH + CELL_SIZE * SPRITES_SCALE[X]
         self._setup_spawn()
         self.anchor = array(BOTTOM_RIGHT)
+        self.set_speed(speed)
+
+
+class GameOverDisplay(Node):
+    RESTART: str = 'restart'
+    label: Label
+    game_resumed: Node.Signal
+
+    def _input_event(self, event: InputEvent) -> None:
+        global root
+        # if event.tag is self.RESTART:
+        
+        if root.tree_pause & Node.PauseModes.TREE_PAUSED:
+            self.remove_child(self.label)
+            self.game_resumed.emit()
+            root.pause_tree(0)
+
+    def show(self) -> None:
+        self.add_child(self.label)
+
+    def __init__(self, name: str = 'GameOverDisplay', coords: tuple[int, int] = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+
+        self.label = Label(coords=array(SCREEN_SIZE) // 2,
+                           color=COLOR_BLACK, text='Game Over')
+        self.label.anchor = CENTER
+        # self.label.position = array(SCREEN_SIZE) // 2 - \
+        #     array(self.label.update_surface().get_size()) // 2
+
+        _input.register_event(self, KEYDOWN, K_SPACE, self.RESTART)
+        self.game_resumed = Node.Signal(self, 'game_resumed')
 
 
 # %%
@@ -1462,17 +1554,10 @@ score_sfx: Sound = Sound(path.join(SOUNDS_DIR, 'score.wav'))
 # %%
 # Singletons
 _input: Input = Input()
-
-# Entities
-label: Label = Label((450, 40))
-
-label.text = 'Points: 0'
-label.color = COLOR_BLACK
-
 # %%
-# Construção da árvore
 root: SceneTree = SceneTree()
 bg: BackGround = BackGround(3)
+spawner: Spawner = Spawner(speed=bg.scroll_speed)
 # spawn: Spawn = Spawn(coords=(randint(0, WIDTH), randint(0, HEIGHT)))
 
 player: Player = Player(coords=array(
@@ -1480,19 +1565,29 @@ player: Player = Player(coords=array(
 # player: Player = Player(coords=(WIDTH // 2, HEIGHT // 2))
 player.scale = array(SPRITES_SCALE)
 
-spawner: Spawner = Spawner()
-spawner.set_speed(bg.scroll_speed)
+# GUI
+label: Label = Label((40, 40), color=COLOR_BLACK, text='Points: 0')
+display: GameOverDisplay = GameOverDisplay()
 
+# Construção da árvore
 root.add_child(bg)
-
 # root.add_child(spawn)
 root.add_child(player)
 root.add_child(spawner)
-# root.color = Color(66, 26, 135)
+root.add_child(label)
+root.add_child(display)
 
 # Conexões
 # spawn.connect(spawn.collected, score_sfx, score_sfx.play)
 player.connect(player.points_changed, label, label.set_text)
+player.connect(player.scored, bg, bg.speed_up)
+player.connect(player.scored, spawner, spawner.speed_up)
+player.connect(player.died, display, display.show)
+display.connect(display.game_resumed, spawner, spawner._on_Game_resumed)
+display.connect(display.game_resumed, player, player._on_Game_resumed)
+
+# Fila de renderização (para labels e outras superfícies)).
+render_queue: deque[Surface, tuple[int, int]] = deque()
 
 # %%
 # Main Loop
@@ -1512,7 +1607,8 @@ while True:
         sprites.draw(screen)
         sprites.update()
 
-    screen.blit(label._draw(), label.position)
-    # Desenha a GUI
+    while render_queue:
+        # Desenha a GUI
+        screen.blit(*render_queue.pop())
 
     pygame.display.update()
