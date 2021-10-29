@@ -15,7 +15,7 @@ from sys import exit, argv
 # Other imports
 import warnings
 from os import path
-from random import randint, randrange
+from random import randint, randrange, choice
 from enum import IntEnum
 from numpy import array
 from numpy.linalg import norm
@@ -48,7 +48,7 @@ GIZMO_RADIUS: int = 2
 
 WIDTH: int = 640
 HEIGHT: int = 480
-SCREEN_SIZE: array = array([WIDTH, HEIGHT])
+SCREEN_SIZE: tuple[int, int] = WIDTH, HEIGHT
 TITLE: str = "Hello PyGame World!"
 FIXED_FPS: int = 60
 
@@ -147,8 +147,8 @@ class Entity:
             '''Lançado ao tentar desconectar um sinal de um objeto que não é observador'''
             pass
 
-        # TODO -> Allow args
-        def connect(self, owner, observer, method) -> None:
+        # Permitir kwargs?
+        def connect(self, owner, observer, method: Callable, *args) -> None:
             '''Conecta o sinal ao método indicado. O mesmo será chamado quando o nó for emitido.'''
             if owner != self.owner:
                 raise Entity.Signal.NotOwner
@@ -156,7 +156,7 @@ class Entity:
             if self._observers.get(observer) != None:
                 raise Entity.Signal.AlreadyConnected
 
-            self._observers[observer] = method
+            self._observers[observer] = (method, args)
 
         def disconnect(self, owner, observer) -> None:
             '''Desconecta o método pertencente ao nó indicado desse sinal.'''
@@ -167,15 +167,18 @@ class Entity:
                 raise Entity.Signal.NotConnected
 
         def emit(self, *args) -> None:
-            '''Emite o sinal, propagando chamadas aos métodos conectados.'''
+            '''Emite o sinal, propagando chamadas aos métodos conectados.
+            Os argumentos passados para as funções conectadas são, respectivamente:
+            os argumentos passados ao conectar a função, em seguida,
+            os argumentos passados na emissão.'''
 
-            for observer in self._observers.keys():
-                self._observers[observer](*args)
+            for observer, data in self._observers.items():
+                data[0](*(data[1] + args))
 
         def __init__(self, owner, name: str) -> None:
             self.owner = owner
             self.name = name
-            self._observers: dict = {}
+            self._observers: dict[Node, tuple[Callable, ]] = {}
 
     def _draw(self, target_pos: tuple[int, int] = None, target_scale: tuple[float, float] = None,
               offset: tuple[int, int] = None) -> None:
@@ -218,14 +221,14 @@ class Entity:
         '''Retorna o tamanho/espaço da célula que envolve o nó.'''
         return VECTOR_ZERO
 
-    def connect(self, signal, observer, method) -> None:
+    def connect(self, signal, observer, method, *args) -> None:
         '''Realiza a conexão de um sinal que pertence ao nó.'''
         try:
-            signal.connect(self, observer, method)
+            signal.connect(self, observer, method, *args)
         except Entity.Signal.NotOwner:
             raise Entity.SignalNotExists
 
-    def disconnect(self, signal, observer, method) -> None:
+    def disconnect(self, signal, observer) -> None:
         '''Desconecta um sinal pertencente ao nó.'''
         try:
             signal.disconnect(self, observer)
@@ -238,7 +241,7 @@ class Entity:
     def get_y(self) -> int:
         return self.position[Y]
 
-    def __init__(self, coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, coords: tuple[int, int] = VECTOR_ZERO) -> None:
         self.position = array(coords)
         self.scale = array(VECTOR_ONE)
         self.anchor = array(CENTER)
@@ -289,7 +292,9 @@ class Node(Entity):
 
         self._children_refs[node.name] = node
         node._parent = self
-        node._enter_tree()
+
+        if self._is_on_tree:
+            node._enter_tree()
 
     def remove_child(self, node=None, at: int = -1):
         '''Remove os registros do nó, se for filho.'''
@@ -298,9 +303,17 @@ class Node(Entity):
             return None
 
         if node == None:
-            node = self._children_index.remove(at)
+            node = self._children_index.pop(at)
+        else:
+            self._children_index.remove(node)
 
-        return self._children_refs.pop(node.name, None)
+        node = self._children_refs.pop(node.name, None)
+        node._parent = None
+
+        if self._is_on_tree:
+            node._exit_tree()
+
+        return node
 
     def toggle_process(self) -> None:
         self.pause_mode = self.pause_mode ^ Node.PauseModes.TREE_PAUSED
@@ -334,9 +347,23 @@ class Node(Entity):
         else:
             return self.position
 
+    # def _parent
+
     def _enter_tree(self) -> None:
-        '''Método virtual que é chamado logo após o nó ser inserido a árvore.'''
-        pass
+        '''Método virtual que é chamado logo após o nó ser inserido a árvore.
+        Chamado após este nó ou algum antecedente ser inserido como filho de outro nó na árvore.'''
+        self._is_on_tree = True
+
+        for child in self._children_index:
+            child._enter_tree()
+
+    def _exit_tree(self) -> None:
+        '''Método virtual que é chamado logo após o nó ser removido da árvore.
+        Chamado após este nó ou algum antecedente ser removido de outro nó na árvore.'''
+        self._is_on_tree = False
+
+        for child in self._children_index:
+            child._exit_tree()
 
     def _draw(self, target_pos: tuple[int, int], target_scale: tuple[float, float],
               offset: tuple[int, int]) -> None:
@@ -391,16 +418,18 @@ class Node(Entity):
         '''Método virtual para processamento de dados em cada passo/ frame.'''
         pass
 
-    def __init__(self, name: str = 'Node', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Node', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(coords=coords)
 
         if not name:
             raise Node.EmptyName
 
-        self.name = name
+        self.name: str = name
+        self._is_on_tree: bool = False
         self._children_index: list[Node] = []
         self._children_refs: dict[str, Node] = {}
-        self._parent = None
+        self._parent: Node = None
+        self._current_groups: list[str] = []
 
 
 # %%
@@ -581,6 +610,15 @@ class Sprite(Node):
     '''Nó que configura um sprite do Pygame como um objeto de jogo
     (que pode ser inserido na árvore da cena).'''
     atlas: Atlas
+    group: str
+
+    def _enter_tree(self) -> None:
+        sprites_groups[self.group].add(self.atlas)
+        super()._enter_tree()
+
+    def _exit_tree(self) -> None:
+        sprites_groups[self.group].remove(self.atlas)
+        super()._exit_tree()
 
     def _draw(self, target_pos: tuple[int, int], target_scale: tuple[float, float],
               offset: tuple[int, int]) -> None:
@@ -594,9 +632,12 @@ class Sprite(Node):
     def get_cell(self) -> array:
         return array(self.atlas.base_size)
 
-    def __init__(self, name: str = 'Sprite', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Sprite', coords: tuple[int, int] = VECTOR_ZERO) -> None:
+        global DEFAULT_GROUP
         super().__init__(name=name, coords=coords)
+
         self.atlas = Atlas()
+        self.group = DEFAULT_GROUP
 
 
 # %%
@@ -612,17 +653,23 @@ class ParallaxBackground(Node):
     def _subpropagate(self, target_pos: array, target_scale: array, rect: pygame.Rect, children_data: list[dict]):
         return super()._subpropagate(target_pos, target_scale, rect, children_data)
 
-    def __init__(self, name: str = 'Node', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Node', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
         self.offset = array([0.0, 0.0])
 '''
 
-
+# %%
 class Shape(Node):
     '''Nó que representa uma forma usada em cálculos de colisão.
     Deve ser adicionada como filha de um `KinematicBody`.'''
     rect_changed: Entity.Signal
     base_size: array([int, int])
+
+    class CollisionType(IntEnum):
+        PHYSICS = 1  # Área usada para detecção de colisão entre corpos
+        AREA = 2  # Área usada para mapeamento (renderização, ou localização).
+
+    type: int = CollisionType.PHYSICS
 
     def _draw(self, target_pos: tuple[int, int], target_scale: tuple[float, float],
               offset: tuple[int, int]) -> None:
@@ -645,13 +692,54 @@ class Shape(Node):
         '''Retorna a caixa delimitadora da forma.'''
         return self._rect
 
-    def __init__(self, name: str = 'Shape', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Shape', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
         self._rect: Rect = None
         self.rect_changed = Entity.Signal(self, 'rect_changed')
         self._debug_fill_bounds = True
 
     rect: property = property(get_rect, set_rect)
+
+
+# %%
+class VisibilityNotifier(Shape):
+    SCREEN_RECT: Rect = Rect(VECTOR_ZERO, SCREEN_SIZE)
+    screen_entered: Node.Signal
+    screen_exited: Node.Signal
+    is_on_screen: bool = None
+
+    def _draw(self, target_pos: tuple[int, int],
+              target_scale: tuple[float, float], offset: tuple[int, int]) -> None:
+        super()._draw(target_pos, target_scale, offset)
+        is_colliding: bool = self._rect.colliderect(
+            VisibilityNotifier.SCREEN_RECT)
+
+        if is_colliding != self.is_on_screen:
+            self._shift(is_colliding)
+
+    def shift_on_screen(self, _to: bool = None) -> None:
+
+        if self.is_on_screen:
+            self.screen_exited.emit()
+        else:
+            self.screen_entered.emit()
+
+        self.is_on_screen = not self.is_on_screen
+
+    def set_on_screen(self, to: bool = None) -> None:
+        self.is_on_screen = to
+        self._shift = self.shift_on_screen
+
+    def __init__(self, name: str = 'VisibilityNotifier',
+                 coords: tuple[int, int] = VECTOR_ZERO) -> None:
+        super().__init__(name=name, coords=coords)
+        self.type = Shape.CollisionType.AREA
+        self.color = Color(118, 10, 201)
+
+        self.screen_exited = Node.Signal(self, 'screen_exited')
+        self.screen_entered = Node.Signal(self, 'screen_entered')
+        self._was_draw_once: bool = False
+        self._shift: Callable = self.set_on_screen
 
 
 # %%
@@ -662,7 +750,7 @@ class KinematicBody(Node):
     def add_child(self, node: Node, at: int = -1) -> None:
         super().add_child(node, at=at)
 
-        if isinstance(node, Shape):
+        if isinstance(node, Shape) and node.type & Shape.CollisionType.PHYSICS:
             self._on_Shape_rect_changed(node)
             node.connect(node.rect_changed, self, self._on_Shape_rect_changed)
 
@@ -675,6 +763,8 @@ class KinematicBody(Node):
                             self._on_Shape_rect_changed)
 
     def _enter_tree(self) -> None:
+        super()._enter_tree()
+
         if not self.has_shape():
             warnings.warn(
                 "A `Shape` node must be added as a child to process collisions.", category=Warning)
@@ -729,7 +819,7 @@ class KinematicBody(Node):
 
         return self._cached_bounds
 
-    def __init__(self, name: str = 'KinematicBody', coords: array = VECTOR_ZERO,
+    def __init__(self, name: str = 'KinematicBody', coords: tuple[int, int] = VECTOR_ZERO,
                  color: Color = Color(46, 10, 115)) -> None:
         super().__init__(name, coords=coords)
         self.color = color
@@ -757,7 +847,7 @@ class Label(Entity):
 
         return self.font.render(self.text, True, self.color)
 
-    def __init__(self, coords: array = VECTOR_ZERO, color: Color = COLOR_WHITE) -> None:
+    def __init__(self, coords: tuple[int, int] = VECTOR_ZERO, color: Color = COLOR_WHITE) -> None:
         super().__init__(coords=coords)
         self.color = color
 
@@ -902,14 +992,62 @@ class PhysicsHelper():
 
 
 # %%
+# root
 class SceneTree(Node):
     '''Nó singleton usado como a rais da árvore da cena.
     Definido dessa forma para facilitar acessos globais.'''
+    pause_toggled: Node.Signal
+
     _instance = None
     tree_pause: int = 0
+    groups: dict[str, list[Node]] = {}
+
+    class AlreadyInGroup(Exception):
+        '''Chamado ao tentar adicionar o nó a um grupo ao qual já pertence.'''
+        pass
 
     def pause_tree(self, pause_mode: int = Node.PauseModes.TREE_PAUSED) -> None:
         self.tree_pause = pause_mode
+        self.pause_toggled.emit(
+            bool((pause_mode ^ self.pause_mode) & Node.PauseModes.TREE_PAUSED))
+
+    def add_to_group(self, node: Node, group: str) -> None:
+        '''Adciona o nó a um grupo determinado.
+        Se o grupo não existir, cria um novo.'''
+
+        if node in node._current_groups:
+            raise SceneTree.AlreadyInGroup
+
+        nodes: list[Node] = self.groups.get(group)  # Stack
+
+        if nodes:
+            nodes.append(node)
+        else:
+            self.groups[group] = [node]
+
+        node._current_groups.append(group)
+
+    def remove_from_group(self, node: Node, group: str) -> None:
+        '''Remove o nó do grupo determinado.
+        Remove o grupo, caso o nó seja o único elemento deste.'''
+        nodes: dict[Node, ] = self.groups.get(group)
+
+        if nodes:
+            nodes.pop(node, None)  # Remove silenciosamente
+
+    def call_group(self, group: str, method_name: str, *args) -> deque[tuple[Node, ]]:
+        '''Faz uma chamada de método em todos os nós pertencentes a um determinado grupo.
+        Retorna uma fila de tuplas com os respectivos nós e seus retornos.'''
+        queue: deque[tuple[Node, ]] = deque()
+
+        for node in self.groups.get(group, ()).keys():
+            deque.append((node, getattr(node, method_name)(*args)))
+
+        return queue
+
+    def is_on_group(self, node: Node, group: str) -> bool:
+        '''Verifica se o nó pertence a um grupo determinado.'''
+        return group in node._current_groups
 
     def __new__(cls):
         # Torna a classe em uma Singleton
@@ -919,11 +1057,17 @@ class SceneTree(Node):
 
         return cls._instance
 
-    def __init__(self, name: str = 'root', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'root', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
+
+        self._is_on_tree = True
+
+        # Events
+        self.pause_toggled = Node.Signal(self, 'pause_toggled')
 
 
 # %%
+# Game Nodes
 class Player(KinematicBody):
     '''Objeto único de jogo. É o ator/ personagem principal controlado pelo jogador.'''
     JUMP: str = "jump"
@@ -933,6 +1077,7 @@ class Player(KinematicBody):
     _jump_strength: float = 0.0
     _floor: float
 
+    was_collided: bool = False
     points_changed: Entity.Signal
     speed: float = 1.0
     jump_force: float = 5.0
@@ -963,8 +1108,8 @@ class Player(KinematicBody):
 
         if x < 0.0:
             x = 0.0
-        elif x > SCREEN_SIZE[0]:
-            x = SCREEN_SIZE[0]
+        elif x > SCREEN_SIZE[X]:
+            x = SCREEN_SIZE[X]
 
         return x
 
@@ -978,7 +1123,6 @@ class Player(KinematicBody):
         self._velocity[Y] += self._jump_strength * 0.1
 
         if self._jump_strength > 0.0:
-            # WATCH
             self._jump_strength = max((self._jump_strength - lerp(
                 self._jump_strength, 0.0, self.GRAVITY), 0.0))
 
@@ -1004,11 +1148,16 @@ class Player(KinematicBody):
             self._jump_strength = self.jump_force
 
     def _on_Body_collided(self, body: KinematicBody) -> None:
-        global root
+        global root, death_sfx, ENEMY_GROUP
 
-        if 'Cactus' in body.name:
+        if self.was_collided:
+            return
+
+        if root.is_on_group(body, ENEMY_GROUP):
             root.pause_tree()
             self.sprite.atlas.is_paused = True
+            death_sfx.play()
+            self.was_collided = True
 
     def set_points(self, value) -> None:
         self._points = value
@@ -1017,9 +1166,9 @@ class Player(KinematicBody):
     def get_points(self) -> None:
         return self._points
 
-    def __init__(self, name: str = 'Player', coords: tuple = VECTOR_ZERO,
+    def __init__(self, name: str = 'Player', coords: tuple[int, int] = VECTOR_ZERO,
                  color: Color = (15, 92, 105)) -> None:
-        global _input, spritesheet, SPRITE_SIZE, SPRITES_SCALE
+        global _input, spritesheet, root, SPRITE_SIZE, SPRITES_SCALE, PLAYER_GROUP
         super().__init__(name, coords=coords, color=color)
 
         self.scale = array(SPRITES_SCALE)
@@ -1036,9 +1185,12 @@ class Player(KinematicBody):
         sprite: Sprite = Sprite()
         sprite.atlas.add_spritesheet(
             spritesheet, h_slice=3, sprite_size=SPRITE_SIZE)
-        sprites_groups['player'].add(sprite.atlas)
+        sprite.group = PLAYER_GROUP
         self.sprite = sprite
+        root.add_to_group(self, PLAYER_GROUP)
         self.add_child(sprite)
+
+        # sprites_groups[ENEMY_GROUP].remove()
 
         # Set the Shape
         shape: Shape = Shape()
@@ -1046,8 +1198,6 @@ class Player(KinematicBody):
         rect.size -= array([16, 16])
         shape.rect = rect
         self.add_child(shape)
-
-        # sprite.connect(sprite.rect_changed, shape, shape.set_rect)
 
         # Shift methods when testing
         self._move_: Callable
@@ -1064,8 +1214,6 @@ class Player(KinematicBody):
     points: property = property(get_points, set_points)
 
 
-# %%
-# Game Nodes
 class Clouds(Node):
     '''Objeto único de jogo. Controla a aparição de elementos visuais decorativos.'''
 
@@ -1083,11 +1231,9 @@ class Clouds(Node):
             cloud.atlas.add_spritesheet(spritesheet, coords=(
                 SPRITE_SIZE[0] * 7, 0), sprite_size=SPRITE_SIZE)
             cloud.scale = array(SPRITES_SCALE)
-            sprites_groups['default'].add(cloud.atlas)
             self.add_child(cloud)
 
-    def __init__(self, name: str = 'Clouds',
-                 coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Clouds', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
         self._spawn_clouds()
 
@@ -1104,10 +1250,9 @@ class Floor(Node):
             piece.atlas.add_spritesheet(spritesheet, coords=(
                 SPRITE_SIZE[0] * 6, 0), sprite_size=SPRITE_SIZE)
             piece.scale = array(SPRITES_SCALE)
-            sprites_groups['default'].add(piece.atlas)
             self.add_child(piece)
 
-    def __init__(self, name: str = 'Floor', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Floor', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
         self.anchor = array(VECTOR_ZERO, dtype=float)
         self._spawn_floor()
@@ -1127,7 +1272,8 @@ class BackGround(Node):
             self.position[X] = WIDTH
             self.clouds.rearrange()
 
-    def __init__(self, scroll_speed: int = 1, name: str = 'BackGround', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, scroll_speed: int = 1, name: str = 'BackGround',
+                 coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
         self.scroll_speed = scroll_speed
         self.anchor = array(VECTOR_ZERO, dtype=float)
@@ -1148,8 +1294,7 @@ class Spawn(KinematicBody):
         self.collected.emit()
         self.position = randint(0, WIDTH), randint(0, HEIGHT)
 
-    def __init__(self, name: str = 'Spawn',
-                 coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Spawn', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
         # self.connect(self.collided, self, self._on_Collided)
         self.collected = Node.Signal(self, 'collected')
@@ -1160,22 +1305,29 @@ class Cactus(KinematicBody):
     '''Objeto único de jogo. Objeto que pode colidir com o personagem protagonista.'''
     speed: float = 1.0
     sprite: Sprite
+    notifier: VisibilityNotifier
 
     def _physics_process(self) -> None:
         self.position[X] -= int(self.speed)
 
-    def __init__(self, name: str = 'Cactus', coords: array = VECTOR_ZERO) -> None:
+    def __init__(self, name: str = 'Cactus', coords: tuple[int, int] = VECTOR_ZERO) -> None:
+        global spritesheet, sprites_groups, root, SPRITES_SCALE, ENEMY_GROUP
         super().__init__(name=name, coords=coords)
-        global SPRITES_SCALE, spritesheet, sprites_groups
         self.scale = array(SPRITES_SCALE)
 
         # Set the sprite
         sprite: Sprite = Sprite()
         sprite.atlas.add_spritesheet(spritesheet, coords=(
             CELL_SIZE * 5, 0), sprite_size=CELL)
-        sprites_groups['enemy'].add(sprite.atlas)
-        self.add_child(sprite)
+        sprite.group = ENEMY_GROUP
+        root.add_to_group(self, ENEMY_GROUP)
         self.sprite = sprite
+        self.add_child(sprite)
+
+        # Set the notifier
+        notifier: VisibilityNotifier = VisibilityNotifier()
+        self.notifier = notifier
+        self.add_child(notifier)
 
         # Set the shape
         shape: Shape = Shape()
@@ -1184,27 +1336,93 @@ class Cactus(KinematicBody):
         shape.rect = rect
         self.add_child(shape)
 
+        notifier.rect = Rect((0, 0), rect.size + array([6, 6]))
+
+
+class PteroDino(KinematicBody):
+    speed: float = 1.0
+    sprite: Sprite
+    notifier: VisibilityNotifier
+
+    def _physics_process(self) -> None:
+        edge: int = self.sprite.get_cell()[X] * self.scale[X]
+        self.position[X] = (self.position[X] -
+                            int(self.speed) + edge) % (WIDTH + edge * 2) - edge
+
+    def _on_Game_pause_toggled(self, paused: bool = False) -> None:
+        self.sprite.atlas.is_paused = paused
+
+    def __init__(self, name: str = 'PteroDino', coords: tuple[int, int] = VECTOR_ZERO,
+                 color: Color = Color(46, 10, 115)) -> None:
+        super().__init__(name=name, coords=coords, color=color)
+        global spritesheet, sprites_groups, root, SPRITES_SCALE, SPRITE_SIZE, ENEMY_GROUP
+        self.scale = array(SPRITES_SCALE)
+
+        # Set the Sprite
+        sprite: Sprite = Sprite()
+        sprite.atlas.add_spritesheet(spritesheet, h_slice=2, coords=(
+            CELL_SIZE * 3, 0), sprite_size=array(SPRITE_SIZE))
+        sprite.group = ENEMY_GROUP
+        self.sprite = sprite
+        root.add_to_group(self, ENEMY_GROUP)
+        self.add_child(sprite)
+
+        # Set the VisibilityNotifier
+        notifier: VisibilityNotifier = VisibilityNotifier()
+        notifier.rect = Rect((0, 0), (24, 20))
+        self.notifier = notifier
+        self.add_child(notifier)
+
+        # Set the Shape
+        shape: Shape = Shape()
+        rect: Rect = Rect(sprite.atlas.rect)
+        rect.size -= array([16, 16])
+        shape.rect = rect
+        self.add_child(shape)
+
+        # Connect to events
+        root.connect(root.pause_toggled, self, self._on_Game_pause_toggled)
+
 
 class Spawner(Node):
     '''Objeto único de jogo. Nó responsável pela aparição de obstáculos na tela.'''
     cactus: Cactus = None
+    pterodino: PteroDino = None
+    spawns: list[Node] = None
 
     def _process(self):
         if self.cactus.position[X] < -WIDTH // 2:
             self.cactus.position[X] = WIDTH + randint(0, WIDTH)
 
-    def _spawn(self) -> None:
+    def set_speed(self, value: float) -> None:
+        self.cactus.speed = value
+        self.pterodino.speed = value
+
+    def _on_Notifier_screen_exited(self, node: Node) -> None:
+        self.remove_child(node)
+        self.add_child(choice(self.spawns))
+
+    def _setup_spawn(self) -> None:
         global FLOOR_COORD
+        notifier: VisibilityNotifier
 
         self.cactus = Cactus(
             coords=(WIDTH + randint(0, WIDTH), FLOOR_COORD + CELL_SIZE // 2))
-        # cactus.anchor = array(TOP_CENTER)
+        notifier = self.cactus.notifier
+        notifier.connect(notifier.screen_exited, self,
+                         self._on_Notifier_screen_exited, self.cactus)
 
-        self.add_child(self.cactus)
+        self.pterodino = PteroDino(coords=(WIDTH, HEIGHT // 2))
+        notifier = self.pterodino.notifier
+        notifier.connect(notifier.screen_exited, self,
+                         self._on_Notifier_screen_exited, self.pterodino)
 
-    def __init__(self, name: str = 'Spawner', coords: array = VECTOR_ZERO) -> None:
+        self.spawns = [self.cactus, self.pterodino]
+        self.add_child(choice(self.spawns))
+
+    def __init__(self, name: str = 'Spawner', coords: tuple[int, int] = VECTOR_ZERO) -> None:
         super().__init__(name=name, coords=coords)
-        self._spawn()
+        self._setup_spawn()
         self.anchor = array(BOTTOM_RIGHT)
 
 
@@ -1219,6 +1437,11 @@ SOUNDS_DIR: str = path.join(ASSETS_DIR, 'sounds')
 SPRITES_SCALE: tuple[float, float] = 3., 3.
 FLOOR_COORD: float = HEIGHT - CELL_SIZE * SPRITES_SCALE[Y]
 
+# Groups
+DEFAULT_GROUP: str = 'default'
+ENEMY_GROUP: str = 'enemy'
+PLAYER_GROUP: str = 'player'
+
 # Sprites
 SPRITE_SIZE: tuple[int, int] = 32, 32
 
@@ -1227,8 +1450,8 @@ spritesheet: Surface = pygame.image.load(
 
 sprites_groups: dict[str, sprite.Group] = {
     'default': sprite.Group(),
-    'player': sprite.Group(),
-    'enemy': sprite.Group()
+    PLAYER_GROUP: sprite.Group(),
+    ENEMY_GROUP: sprite.Group(),
 }
 
 # Sound Streams
@@ -1258,10 +1481,10 @@ player: Player = Player(coords=array(
 player.scale = array(SPRITES_SCALE)
 
 spawner: Spawner = Spawner()
-spawner.cactus.speed = bg.scroll_speed
+spawner.set_speed(bg.scroll_speed)
 
 root.add_child(bg)
-root.add_child(spawn)
+
 # root.add_child(spawn)
 root.add_child(player)
 root.add_child(spawner)
