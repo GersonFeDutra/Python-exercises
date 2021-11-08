@@ -325,7 +325,7 @@ class Node(Entity):
             self.pause_mode = self.pause_mode | Node.PauseModes.TREE_PAUSED
         else:
             # Remove a flag de pausa, se estiver inserida.
-            self.pause_mode = self.pause_mode & -Node.PauseModes.TREE_PAUSED
+            self.pause_mode = self.pause_mode & ~Node.PauseModes.TREE_PAUSED
 
     def get_child(self, name: str = '', at: int = -1):
         '''Busca um nó filho, por nome ou índice.'''
