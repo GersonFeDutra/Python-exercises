@@ -1207,6 +1207,7 @@ class Player(KinematicBody):
         self.was_collided = False
         self.position = self._start_position
         self.sprite.atlas.is_paused = False
+        self.points = 0
 
     def set_points(self, value) -> None:
         self._points = value
