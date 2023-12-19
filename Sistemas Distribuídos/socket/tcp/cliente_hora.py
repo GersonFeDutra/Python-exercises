@@ -1,13 +1,13 @@
 import socket
 
 HOST: str = 'localhost'
-PORT: int = 8081
+PORT: int = 8083
 
 
 def main(*_args) -> None:
     # Create a TCP/IP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
+    
     CLIENT_ADDRESS = (HOST, PORT)
     print('Connection to %s port %s' % CLIENT_ADDRESS)
 
