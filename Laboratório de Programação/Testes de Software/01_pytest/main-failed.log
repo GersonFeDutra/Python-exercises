@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform linux -- Python 3.9.7, pytest-6.2.5, py-1.11.0, pluggy-1.0.0
+rootdir: /home/linky/Desktop/Programming/Python/Laboratório de Programação/Testes de Software/01_pytest
+collected 1 item
+
+main.py F                                                                [100%]
+
+=================================== FAILURES ===================================
+_________________________________ test_answer __________________________________
+
+    def test_answer() -> None:
+>       assert func(3) == 5
+E       assert 4 == 5
+E        +  where 4 = func(3)
+
+main.py:10: AssertionError
+=========================== short test summary info ============================
+FAILED main.py::test_answer - assert 4 == 5
+============================== 1 failed in 0.02s ===============================
