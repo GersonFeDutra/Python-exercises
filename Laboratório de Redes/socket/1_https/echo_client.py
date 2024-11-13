@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import socket
 
 HOST: str = '127.0.0.1'

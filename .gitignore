@@ -1,6 +1,7 @@
 snippets/
 docs/
 .vscode/
+playground/
 *__pycache__/
 CursoemVideo/.idea/
 CursoemVideo/2020/world_1/build/
@@ -25,3 +26,9 @@ playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment/backgrou
 !playground/pygame/hello_pygame/assets/sprites/warped_city_2/Environment/background/back.png
 
 !playground/pygame/dino/assets/sounds/*
+Aprendizado de Máquina/new/*
+Aprendizado de Máquina/old/*
+Aprendizado de Máquina/.old/*
+*:Zone.Identifier
+*.tmp
+*.old

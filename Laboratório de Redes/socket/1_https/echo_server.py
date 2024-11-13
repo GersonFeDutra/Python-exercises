@@ -1,3 +1,4 @@
+#!/usr/bin/python3
 import socket
 
 HOST: str = '127.0.0.1'  # Standard loopback interface address (localhost)
@@ -15,7 +16,7 @@ sock.bind(SERVER_ADDRESS)
 
 MAX_QUEUE_CONNECT: int = 7  # specifies the max no, of queued connections
 sock.listen(MAX_QUEUE_CONNECT)  # Listen to clients
-client, adress = sock.accept()
+client, address = sock.accept()
 
 while True:
     print('Waiting to receive a message from client...')
