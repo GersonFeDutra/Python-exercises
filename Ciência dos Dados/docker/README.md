@@ -30,10 +30,10 @@ docker ps -a # list containers
 
 ```bash
 # Starts and runs the server in the port 80
-docker-compose up
+docker compose up
 
 # Stops the server
-docker-compose down
+docker compose down
 
 # You still needs to remove the image
 docker image prune -a # deletes all
