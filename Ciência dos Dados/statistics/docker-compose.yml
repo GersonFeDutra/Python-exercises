@@ -1,0 +1,18 @@
+services:
+  anaconda:
+    build: .
+    #image: continuumio/anaconda3:2024.10-1  # defined in the `Dockerfile`
+    container_name: anaconda-dev
+    ports:
+      - "8888:8888"   # JupyterLab
+    volumes:
+      - ./app:/app    # Mount local ./app to /app in container
+    # Entry point was set as extern script
+    # working_dir: /app
+    # command: >
+    #   jupyter-lab
+    #   --ip=0.0.0.0
+    #   --port=8888
+    #   --no-browser
+    #   --allow-root
+    tty: true

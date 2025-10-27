@@ -11,6 +11,7 @@ CursoemVideo/2020/world_1/build/
 *.wav
 *.ogg
 *.ase
+*.env
 playground/pygame/hello_pygame/assets/sprites/warped_city_2/*
 
 !playground/pygame/hello_pygame/assets/sprites/warped_city_2/Sprites
