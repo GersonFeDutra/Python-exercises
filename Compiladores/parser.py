@@ -34,19 +34,22 @@ class Parser:
 
     def expr(self):
         """
-        Regra: expr -> digit oper
+        Regra: expr -> digit* oper
+        Aceita números maiores que 9 (mais de um dígito)
         """
         self.digit()
         while True:
             # Regra: oper -> + digit { print(+) } oper
             if self.lookahead == '+':
                 self.match('+')
+                print(' ', end='', flush=True)
                 self.digit()
                 print('+', end='', flush=True)
             
             # Regra: oper -> - digit { print(-) } oper
             elif self.lookahead == '-':
                 self.match('-')
+                print(' ', end='', flush=True)
                 self.digit()
                 print('-', end='', flush=True)
             
@@ -58,11 +61,12 @@ class Parser:
         """
         Regra: digit -> digit { print(digit) }
         """
-        if self.lookahead.isdigit():
-            print(self.lookahead, end='', flush=True)
-            self.match(self.lookahead)
-        else:
-            raise ParseError()
+        while self.lookahead.isdigit():
+            try:
+                print(self.lookahead, end='', flush=True)
+                self.match(self.lookahead)
+            except ParseError:
+                return
 
     def match(self, t):
         """Verifica se o caractere atual corresponde ao esperado e avança."""
