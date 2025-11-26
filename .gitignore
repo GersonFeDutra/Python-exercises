@@ -33,3 +33,4 @@ Aprendizado de Máquina/.old/*
 *:Zone.Identifier
 *.tmp
 *.old
+!Compiladores/.vscode/

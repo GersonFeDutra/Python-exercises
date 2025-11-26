@@ -9,25 +9,36 @@ class TAG(IntEnum):
     FALSE = 259 # apenas para ilustrar
 
 
+def log(message: str, *args, **kwargs):
+    # Note that stderr is unbuffered: always flush.
+    print(message, *args, file=sys.stderr, **kwargs)
+
+
 class Lexer:
-    def __init__(self, filename: str):
+    def __init__(self, filename: str, log_enabled: bool = False):
         self._line = 1
         self._peek = ' '
         self._pos = 0
         self._id_table = {}
         self._open_source_file(filename)
+        if log_enabled:
+            self._log = log
+        else:
+            self._log = lambda *args, **kwargs: None
 
     def _open_source_file(self, filename: str):
-        
-        try:
-            with open(filename, 'r') as file:
-                self._source_code = file.read()
-                
-                # (Opcional) Remove espaços em branco extras no final do arquivo 
-                # para evitar erros com editores que salvam muitas linhas vazias
-                self._source_code = self._source_code.strip()
-        except FileNotFoundError:
-            print(f"Erro: O arquivo '{filename}' não foi encontrado.")
+        """
+        Abre o arquivo de código fonte e carrega seu conteúdo na variável
+        self._source_code.
+
+        :param filename: nome do arquivo a ser aberto
+        """
+        with open(filename, 'r') as file:
+            self._source_code = file.read()
+            
+            # (Opcional) Remove espaços em branco extras no final do arquivo
+            # para evitar erros com editores que salvam muitas linhas vazias
+            self._source_code = self._source_code.strip()
 
     def _init_id_table(self):
         self._id_table = {
@@ -52,8 +63,8 @@ class Lexer:
         while self._peek.isspace():
             if self._peek == '\n':
                 self._line += 1
-                print()
-                print(f"Linha {self._line}: ", end='', flush=True)
+                self._log()
+                self._log(f"Linha {self._line}: ", end='')
             self._peek = self._get_next_char() 
             
         # Trata números inteiros
@@ -64,7 +75,7 @@ class Lexer:
                 self._peek = self._get_next_char()
                 
             num = int(num_str)
-            print(f"<NUM, {num}> ", end='', flush=True)
+            self._log(f"<NUM, {num}> ", end='')
             return Num(num)
         
         # Trata identificadores e palavras reservadas
@@ -79,29 +90,29 @@ class Lexer:
                 token_found = self._id_table[id_str]
                 
                 if token_found.tag == TAG.TRUE:
-                    print(f"<TRUE> ", end='', flush=True)
+                    self._log(f"<TRUE> ", end='')
                 elif token_found.tag == TAG.FALSE:
-                    print(f"<FALSE> ", end='', flush=True)
+                    self._log(f"<FALSE> ", end='')
                 
-                print(f"<ID, {token_found.name}> ", end='', flush=True)     
+                self._log(f"<ID, {token_found.name}> ", end='')     
                 return self._id_table[id_str]
             
             # se o identificador não estiver na tabela, cria um novo
             else:
                 new_id = Id(id_str)
                 self._id_table[id_str] = new_id
-                print(f"<ID, {new_id.name}> ", end='', flush=True)
+                self._log(f"<ID, {new_id.name}> ", end='')
                 return new_id
             
         # Trata operadores
         t_oper = Token(self._peek)
-        print(f"<'{t_oper.tag}'> ", end='', flush=True)
+        self._log(f"<'{t_oper.tag}'> ", end='')
         self._peek = self._get_next_char()
         
         return t_oper
 
     def start(self):
-        print("Linha 1: ", end='', flush=True)
+        self._log("Linha 1: ", end='')
         while (self._peek != ''):
             self._scan()
 
