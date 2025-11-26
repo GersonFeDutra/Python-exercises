@@ -121,16 +121,3 @@ class Num(Token):
     def __init__(self, value: int):
         super().__init__(TAG.NUM)
         self.value = value
-
-
-if __name__ == "__main__":
-    #region 1. Verifica se o usuário passou o nome do arquivo
-    if len(sys.argv) < 2:
-        print('\033[33m' f'Uso: python {sys.argv[0]} <arquivo_fonte>' '\033[m')
-        sys.exit(1)
-    #endregion
-    
-    #nome_arquivo = "code.las"
-    nome_arquivo = sys.argv[1]
-    lexer = Lexer(nome_arquivo)
-    lexer.start()

@@ -104,35 +104,3 @@ class Parser:
             self.lookahead = self.get_next_char()
         else:
             raise ParseError()
-
-# Equivalente ao main() do postfix.cpp
-if __name__ == "__main__":
-    # 1. Verifica se o usuário passou o nome do arquivo
-    if len(sys.argv) < 2:
-        print("Uso: python parser.py <arquivo_fonte> [-no|--no-optimize]")
-        sys.exit(1)
-
-    nome_arquivo = sys.argv[1]
-
-    optimize = True  # Allows to use an accumulator to process result directly
-    if len(sys.argv) > 2:
-        optimize = not(sys.argv[2] == '-no' or sys.argv[2] == '--no-optimize')
-
-    try:
-        # 2. Abre o arquivo e lê todo o conteúdo
-        with open(nome_arquivo, 'r') as arquivo:
-            conteudo = arquivo.read()
-
-            # (Opcional) Remove espaços em branco extras no final do arquivo 
-            # para evitar erros com editores que salvam muitas linhas vazias
-            conteudo = conteudo.strip()
-
-        # 3. Inicia o Parser com o conteúdo do arquivo
-        tradutor = Parser(conteudo, optimize)
-        tradutor.start()
-
-        print() # quebra de linha final
-    except FileNotFoundError:
-        print(f"Erro: O arquivo '{nome_arquivo}' não foi encontrado.")
-    except ParseError:
-        print("\nErro de Sintaxe")
