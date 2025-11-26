@@ -3,15 +3,16 @@ import sys
 
 
 class TAG(IntEnum):
+    ...
     NUM = 256
     ID = 257
     TRUE = 258 # apenas para ilustrar
     FALSE = 259 # apenas para ilustrar
 
 
-def log(message: str, *args, **kwargs):
+def log(*args, **kwargs):
     # Note that stderr is unbuffered: always flush.
-    print(message, *args, file=sys.stderr, **kwargs)
+    print(*args, file=sys.stderr, **kwargs)
 
 
 class Lexer:
@@ -29,7 +30,7 @@ class Lexer:
     def _open_source_file(self, filename: str):
         """
         Abre o arquivo de código fonte e carrega seu conteúdo na variável
-        self._source_code.
+        _source_code.
 
         :param filename: nome do arquivo a ser aberto
         """
@@ -58,16 +59,30 @@ class Lexer:
             return char
         return '' # Fim da entrada
 
-    def _scan(self):
-        # Implementação do método de varredura (scan) do lexer
+    def scan(self):
+        """Implementação do método de varredura (scan) do lexer."""
+        #region 1. Conta o número de linhas, ignorando os espaços em branco
         while self._peek.isspace():
             if self._peek == '\n':
                 self._line += 1
                 self._log()
                 self._log(f"Linha {self._line}: ", end='')
             self._peek = self._get_next_char() 
-            
-        # Trata números inteiros
+        #endregion
+
+        #region 2. Ignora comentários [ #...\n and /*...*/ ]
+        if self._peek == '#':
+            while self._peek != '\n' and self._peek != '':
+                self._peek = self._get_next_char()
+        if self._peek == '/' and len(self._source_code) > self._pos and self._source_code[self._pos] == '*':
+            while self._peek != '*' or len(self._source_code) <= self._pos or \
+                  self._source_code[self._pos] != '/':
+                self._peek = self._get_next_char()
+            self._get_next_char()
+            self._peek = self._get_next_char()
+        #endregion
+
+        #region 2. Trata números inteiros
         if self._peek.isdigit():
             num_str = ""
             while self._peek.isdigit():
@@ -77,14 +92,15 @@ class Lexer:
             num = int(num_str)
             self._log(f"<NUM, {num}> ", end='')
             return Num(num)
-        
-        # Trata identificadores e palavras reservadas
+        #endregion
+
+        #region 3. Trata identificadores e palavras reservadas
         if self._peek.isalpha():
             id_str = ""
             while self._peek.isalpha():
                 id_str += self._peek
                 self._peek = self._get_next_char()
-                
+            
             if id_str in self._id_table:
                 # para debugging
                 token_found = self._id_table[id_str]
@@ -103,23 +119,34 @@ class Lexer:
                 self._id_table[id_str] = new_id
                 self._log(f"<ID, {new_id.name}> ", end='')
                 return new_id
-            
-        # Trata operadores
+        #endregion
+
+        #region 4. Trata operadores
         t_oper = Token(self._peek)
         self._log(f"<'{t_oper.tag}'> ", end='')
         self._peek = self._get_next_char()
-        
+        #endregion
+
         return t_oper
 
     def start(self):
         self._log("Linha 1: ", end='')
         while (self._peek != ''):
-            self._scan()
+            self.scan()
+        self._log()
 
 
 class Token:
     def __init__(self, tag: TAG):
         self.tag = tag
+
+    def __eq__(self, value: TAG | str) -> bool:
+        return value is TAG and self.tag == value \
+            or value is str and self.tag == TAG.ID
+
+    def __ne__(self, value: TAG | str) -> bool:
+        return value is TAG and self.tag != value \
+            or value is str and self.tag != TAG.ID
 
 
 class Id(Token):

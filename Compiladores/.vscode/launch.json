@@ -14,10 +14,25 @@
         },
 
         {
+            "name": "Python Debugger [no log]",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "cumpiler.py",
+            "console": "integratedTerminal",
+            "args": "./code.cum",
+            "presentation": {
+                "hidden": false,
+                "group": "debug",
+                "order": 1
+            },
+            "cwd": "${workspaceFolder}"
+        },
+
+        {
             "name": "Python Debugger",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/cumpiler.py",
+            "program": "cumpiler.py",
             "console": "integratedTerminal",
             "args": [
                 "./code.cum", 
@@ -27,7 +42,8 @@
                 "hidden": false,
                 "group": "debug",
                 "order": 1
-            }
+            },
+            "cwd": "${workspaceFolder}"
         },
 
         {

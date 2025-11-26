@@ -6,14 +6,16 @@
     @option [-no|--no-optimize] don't use accumulator
 """
 
-from enum import Enum
 import sys
+from options import *
 
 
 EXIT_ERROR: int = 1
 
 def show_help() -> None:
+    # TODO -> Requires the output file for the --log option 
     print('\033[34m'
+        #f'Usage: python {sys.argv[0]} <source_file> [<output_file>] [-!|--log] [-no|--no-optimize] [-l|--lexer]\n'
         f'Usage: python {sys.argv[0]} <source_file> [-!|--log] [-no|--no-optimize] [-l|--lexer]\n'
         '\t[-?|--help] show this help\n'
         '\t[-!|--log] log intermediary output\n'
@@ -28,11 +30,6 @@ def err(message: str, *args, **kwargs):
 
 
 if __name__ == "__main__":
-    class Options(Enum):
-        NONE = 0
-        LEXER = 1
-        LOG = 2
-
     #region Options
     options: Options = Options.NONE
     optimize = True  # Allows to use an accumulator to process result directly
@@ -56,7 +53,7 @@ if __name__ == "__main__":
             if sys.argv[i] in ['-!', '--log']:
                 options |= Options.LOG
             if sys.argv[i] in ['-no', '--no-optimize']:
-                optimize = False
+                optimize |= Options.OPTIMIZE
     #endregion
 
     from lexer import Lexer
@@ -73,21 +70,11 @@ if __name__ == "__main__":
         from parser import Parser, ParseError
 
         try:
-            #region 3. Abre o arquivo e lê todo o conteúdo
-            with open(source_filename, 'r') as file:
-                content = file.read()
-
-                # (Opcional) Remove espaços em branco extras no final do arquivo 
-                # para evitar erros com editores que salvam muitas linhas vazias
-                content = content.strip()
-            #endregion
-
-            #region 4. Inicia o Parser com o conteúdo do arquivo
-            tradutor = Parser(content, optimize)
+            #region 3. Inicia o Parser com o conteúdo do arquivo
+            tradutor = Parser(source_filename, options)
             tradutor.start()
-            #endregion
-
             print() # quebra de linha final
+            #endregion
         except FileNotFoundError:
             err(f"Erro: O arquivo '{source_filename}' não foi encontrado.")
         except ParseError:
