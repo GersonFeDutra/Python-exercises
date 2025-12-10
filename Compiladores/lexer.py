@@ -1,31 +1,82 @@
-from enum import IntEnum
+#!./venv/bin/python3
+
+from utils import EXIT_ERROR, log
 import sys
 
 
-class TAG(IntEnum):
+class Tag():
+    name = property(lambda self: self._name, None, None, "Nome da tag - para debug.")
+
+    def __init__(self, value: int | str, name: str | None = None):
+        if isinstance(value, str):
+            self.value = ord(value)
+            self._name = value
+        else:
+            assert name is not None, "name deve ser fornecido se o valor for um inteiro."
+            self.value = value
+            self._name = name
+    
+    def __eq__(self, value: 'Tag | str') -> bool:
+        return isinstance(value, Tag) and self.value == value.value \
+            or isinstance(value, str) and self._name == value
+    
+    def __ne__(self, value: 'Tag | str') -> bool:
+        return isinstance(value, Tag) and self.value != value.value \
+            or isinstance(value, str) and self._name != value
+
+    def __str__(self) -> str:
+        return self._name
+
+class Tags:
     ...
-    NUM = 256
-    ID = 257
-    TRUE = 258 # apenas para ilustrar
-    FALSE = 259 # apenas para ilustrar
-
-
-def log(*args, **kwargs):
-    # Note that stderr is unbuffered: always flush.
-    print(*args, file=sys.stderr, **kwargs)
+    NUM = Tag(256, 'NUM')
+    ID = Tag(257, 'ID')
+    TYPE = Tag(258, 'TYPE')
+    TRUE = Tag(259, 'TRUE') # apenas para ilustrar
+    FALSE = Tag(260, 'FALSE') # apenas para ilustrar
+    # TODO
+    # CHAR = Tag(261, 'CHAR')
+    # STR = Tag(262, 'STR')
+    # INT = Tag(263, 'INT')
+    # FLOAT = Tag(264, 'FLOAT')
+    # PTR = Tag(265, 'PTR')
 
 
 class Lexer:
+    _id_table: dict[str, 'Token | Id | Type'] = {}
+    line = property(lambda self: self._line, None, None, "Current line number being parsed.")
+
     def __init__(self, filename: str, log_enabled: bool = False):
         self._line = 1
         self._peek = ' '
         self._pos = 0
-        self._id_table = {}
         self._open_source_file(filename)
         if log_enabled:
             self._log = log
         else:
             self._log = lambda *args, **kwargs: None
+        self._init_id_table()
+        # TODO -> detect empty lines: <https://chatgpt.com/g/g-p-6917e068d6c481918f28825411103d8c-compilers/c/69374318-686c-8330-a4db-d750c2e61e83>
+        #self._line_emitted_token = False
+
+    def _init_id_table(self):
+        self._id_table = {
+            "true": Token(Tags.TRUE),
+            "false": Token(Tags.FALSE),
+            "int": Type('int'),  # 32 bits
+            "float": Type('float'),  # 32 bits
+            "double": Type('double'),  # 64 bits
+            "bool": Type('bool'),
+            "char": Type('char'),
+            "str": Type('str'),
+            "i8": Type('i8'),
+            "i16": Type('i16'),
+            "u16": Type('u16'),
+            "u32": Type('u32'),
+            "i64": Type('i64'),
+            "u64": Type('u64'),
+            "void": Type('void'),  # for pointers and functions
+        }
 
     def _open_source_file(self, filename: str):
         """
@@ -36,44 +87,39 @@ class Lexer:
         """
         with open(filename, 'r') as file:
             self._source_code = file.read()
-            
-            # (Opcional) Remove espaços em branco extras no final do arquivo
-            # para evitar erros com editores que salvam muitas linhas vazias
-            self._source_code = self._source_code.strip()
-
-    def _init_id_table(self):
-        self._id_table = {
-            "true": Token(TAG.TRUE),
-            "false": Token(TAG.FALSE)
-        }
 
     def _get_next_char(self):
-        """Simual o cin.get() lendo da string armazenada"""
+        """Simula o cin.get() lendo da string armazenada"""
         # Implementação do método para obter o próximo caractere do código fonte
         while self._pos < len(self._source_code):
             char = self._source_code[self._pos]
             # Se for espaço ou tabulação, ignora
             self._pos += 1
-            if char in ['\t']: 
+            if char in '\t':
                 continue
+            if char == '\n' or (char == '\r'
+              and self._pos < len(self._source_code)
+              and self._source_code[self._pos] == '\n'):
+                self._line += 1
+                return '\n'
             return char
         return '' # Fim da entrada
 
     def scan(self):
-        """Implementação do método de varredura (scan) do lexer."""
+        '''Implementação do método de varredura (scan) do lexer.'''
         #region 1. Conta o número de linhas, ignorando os espaços em branco
         while self._peek.isspace():
             if self._peek == '\n':
-                self._line += 1
                 self._log()
-                self._log(f"Linha {self._line}: ", end='')
-            self._peek = self._get_next_char() 
+                self._log(f'Linha {self._line}: ', end='')
+            self._peek = self._get_next_char()
         #endregion
 
         #region 2. Ignora comentários [ #...\n and /*...*/ ]
         if self._peek == '#':
             while self._peek != '\n' and self._peek != '':
                 self._peek = self._get_next_char()
+
         if self._peek == '/' and len(self._source_code) > self._pos and self._source_code[self._pos] == '*':
             while self._peek != '*' or len(self._source_code) <= self._pos or \
                   self._source_code[self._pos] != '/':
@@ -82,18 +128,30 @@ class Lexer:
             self._peek = self._get_next_char()
         #endregion
 
-        #region 2. Trata números inteiros
+        #region 2. Trata números
         if self._peek.isdigit():
+            #region Inteiros
             num_str = ""
             while self._peek.isdigit():
                 num_str += self._peek
                 self._peek = self._get_next_char()
-                
-            num = int(num_str)
-            self._log(f"<NUM, {num}> ", end='')
-            return Num(num)
+            
+            if self._peek != '.':
+                num = int(num_str)
+                self._log(f"<NUM, {num}> ", end='')
+                return Num(num)
+            #endregion
+            else:
+                #region Ponto Flutuante
+                num_str += self._peek
+                self._peek = self._get_next_char()
+                while self._peek.isdigit():
+                    num_str += self._peek
+                    self._peek = self._get_next_char()
+                #endregion
         #endregion
 
+        # TODO -> Tratar identificadores genéricos de forma diferente de palavras-reservadas
         #region 3. Trata identificadores e palavras reservadas
         if self._peek.isalpha():
             id_str = ""
@@ -103,16 +161,16 @@ class Lexer:
             
             if id_str in self._id_table:
                 # para debugging
-                token_found = self._id_table[id_str]
-                
-                if token_found.tag == TAG.TRUE:
-                    self._log(f"<TRUE> ", end='')
-                elif token_found.tag == TAG.FALSE:
-                    self._log(f"<FALSE> ", end='')
-                
-                self._log(f"<ID, {token_found.name}> ", end='')     
-                return self._id_table[id_str]
-            
+                token_found: Token | Type | Id = self._id_table[id_str]
+                if token_found is Type:
+                    #self._log(f'<{id_str}> ', end='')
+                    self._log(f'<{token_found.tag.name}, {token_found.name}> ', end='')
+                elif token_found is Id:
+                    self._log(f"<{token_found.tag.name}, {token_found.name}> ", end='')
+                else:
+                    self._log(f"<{token_found.tag.name}> ", end='')
+                return token_found
+
             # se o identificador não estiver na tabela, cria um novo
             else:
                 new_id = Id(id_str)
@@ -122,8 +180,15 @@ class Lexer:
         #endregion
 
         #region 4. Trata operadores
-        t_oper = Token(self._peek)
-        self._log(f"<'{t_oper.tag}'> ", end='')
+        t_oper = Token(self._peek) # pyright: ignore[reportArgumentType]
+        if t_oper.tag.name == '':
+            return t_oper  # EOF
+        if t_oper.tag.name in [' ', '\r', '\n', '\t']:
+            # TODO -> better account for line breaker
+            self._peek = self._get_next_char()
+            return self.scan()  # ignora caracteres em branco
+        else:
+            self._log(f"<'{t_oper.tag}'> ", end='')
         self._peek = self._get_next_char()
         #endregion
 
@@ -137,25 +202,67 @@ class Lexer:
 
 
 class Token:
-    def __init__(self, tag: TAG):
-        self.tag = tag
+    def __init__(self, tag: Tag | str | int):
+        if isinstance(tag, int):
+            self.tag = Tag(tag, chr(tag) if 32 <= tag <= 126 else f'TAG_{tag}')
+        elif isinstance(tag, str):
+            if tag == '':
+                self.tag = Tag(0, tag)
+            else:
+                self.tag = Tag(ord(tag), tag)
+        else:
+            assert isinstance(tag, Tag), f'{tag}'
+            self.tag = tag
 
-    def __eq__(self, value: TAG | str) -> bool:
-        return value is TAG and self.tag == value \
-            or value is str and self.tag == TAG.ID
+    def __eq__(self, value: Tag | str) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
+        return isinstance(value, Tag) and self.tag == value \
+            or isinstance(value, str) and self.tag.name == value
 
-    def __ne__(self, value: TAG | str) -> bool:
-        return value is TAG and self.tag != value \
-            or value is str and self.tag != TAG.ID
+    def __ne__(self, value: Tag | str) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
+        return isinstance(value, Tag) and self.tag != value \
+            or isinstance(value, str) and self.tag.name != value
+
+    def __str__(self) -> str:
+        return str(self.tag)
 
 
 class Id(Token):
+    name: str
     def __init__(self, name: str):
-        super().__init__(TAG.ID)
+        super().__init__(Tags.ID)
         self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Type(Token):
+    def __init__(self, name: str):
+        super().__init__(Tags.TYPE)
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class Num(Token):
     def __init__(self, value: int):
-        super().__init__(TAG.NUM)
+        super().__init__(Tags.NUM)
         self.value = value
+
+
+def main(*args, **kwargs) -> None:
+    from utils import log_warning
+    
+    # Verifica se o usuário passou o nome do arquivo
+    if len(sys.argv) < 2:
+        log_warning('Uso: \033[32m''python' f'\033[m {sys.argv[0]} \033[34m<arquivo_fonte>')
+        sys.exit(EXIT_ERROR)
+    
+    filename = sys.argv[1]
+    lexer = Lexer(filename, log_enabled=True)
+    lexer.start()
+
+
+if __name__ == '__main__':
+    main()

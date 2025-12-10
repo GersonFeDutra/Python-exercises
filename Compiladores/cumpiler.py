@@ -8,11 +8,10 @@
 
 import sys
 from options import *
+from utils import log_error, EXIT_ERROR
 
 
-EXIT_ERROR: int = 1
-
-def show_help() -> None:
+def show_help():
     # TODO -> Requires the output file for the --log option 
     print('\033[34m'
         #f'Usage: python {sys.argv[0]} <source_file> [<output_file>] [-!|--log] [-no|--no-optimize] [-l|--lexer]\n'
@@ -24,14 +23,9 @@ def show_help() -> None:
         '\033[m')
 
 
-def err(message: str, *args, **kwargs):
-    # Note that stderr is unbuffered: always flush.
-    print(f'\033[31m{message}\033[m', *args, file=sys.stderr, **kwargs)
-
-
 if __name__ == "__main__":
     #region Options
-    options: Options = Options.NONE
+    options: Options = Options.NONE # type: ignore
     optimize = True  # Allows to use an accumulator to process result directly
     #endregion
 
@@ -76,6 +70,6 @@ if __name__ == "__main__":
             print() # quebra de linha final
             #endregion
         except FileNotFoundError:
-            err(f"Erro: O arquivo '{source_filename}' não foi encontrado.")
+            log_error(f"Erro: O arquivo '{source_filename}' não foi encontrado.")
         except ParseError:
-            err("\nErro de Sintaxe")
+            log_error("\nErro de Sintaxe")

@@ -64,5 +64,19 @@
             }
         },
 
+        {
+            "name": "Python Debugger [current file]",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "./code.cum",
+            "presentation": {
+                "hidden": false,
+                "group": "debug",
+                "order": 1
+            },
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }
