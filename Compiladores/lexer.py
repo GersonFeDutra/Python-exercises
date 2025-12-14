@@ -1,7 +1,8 @@
 #!./venv/bin/python3
 
-from utils import EXIT_ERROR, log
 import sys
+from utils import EXIT_ERROR, log
+from istream import TuiInputStream, InputStream
 
 
 class Tag():
@@ -15,17 +16,18 @@ class Tag():
             assert name is not None, "name deve ser fornecido se o valor for um inteiro."
             self.value = value
             self._name = name
-    
-    def __eq__(self, value: 'Tag | str') -> bool:
+
+    def __eq__(self, value: 'Tag | str') -> bool: # type: ignore
         return isinstance(value, Tag) and self.value == value.value \
             or isinstance(value, str) and self._name == value
-    
-    def __ne__(self, value: 'Tag | str') -> bool:
+
+    def __ne__(self, value: 'Tag | str') -> bool: # type: ignore
         return isinstance(value, Tag) and self.value != value.value \
             or isinstance(value, str) and self._name != value
 
     def __str__(self) -> str:
         return self._name
+
 
 class Tags:
     ...
@@ -41,16 +43,14 @@ class Tags:
     # FLOAT = Tag(264, 'FLOAT')
     # PTR = Tag(265, 'PTR')
 
-
 class Lexer:
     _id_table: dict[str, 'Token | Id | Type'] = {}
     line = property(lambda self: self._line, None, None, "Current line number being parsed.")
 
-    def __init__(self, filename: str, log_enabled: bool = False):
+    def __init__(self, istream: InputStream | TuiInputStream, log_enabled: bool = False):
         self._line = 1
         self._peek = ' '
-        self._pos = 0
-        self._open_source_file(filename)
+        self._istream = istream
         if log_enabled:
             self._log = log
         else:
@@ -91,15 +91,12 @@ class Lexer:
     def _get_next_char(self):
         """Simula o cin.get() lendo da string armazenada"""
         # Implementação do método para obter o próximo caractere do código fonte
-        while self._pos < len(self._source_code):
-            char = self._source_code[self._pos]
+        while not self._istream.eof_reached:
+            char = self._istream.get_char()
             # Se for espaço ou tabulação, ignora
-            self._pos += 1
             if char in '\t':
                 continue
-            if char == '\n' or (char == '\r'
-              and self._pos < len(self._source_code)
-              and self._source_code[self._pos] == '\n'):
+            if char == '\n' or (char == '\r' and self._istream.peek() == '\n'):
                 self._line += 1
                 return '\n'
             return char
@@ -120,9 +117,8 @@ class Lexer:
             while self._peek != '\n' and self._peek != '':
                 self._peek = self._get_next_char()
 
-        if self._peek == '/' and len(self._source_code) > self._pos and self._source_code[self._pos] == '*':
-            while self._peek != '*' or len(self._source_code) <= self._pos or \
-                  self._source_code[self._pos] != '/':
+        if self._peek == '/' and self._istream.peek() == '*':
+            while self._peek != '*' or self._istream.peek() != '/':
                 self._peek = self._get_next_char()
             self._get_next_char()
             self._peek = self._get_next_char()
@@ -251,18 +247,37 @@ class Num(Token):
         self.value = value
 
 
-def main(*args, **kwargs) -> None:
-    from utils import log_warning
-    
-    # Verifica se o usuário passou o nome do arquivo
-    if len(sys.argv) < 2:
-        log_warning('Uso: \033[32m''python' f'\033[m {sys.argv[0]} \033[34m<arquivo_fonte>')
-        sys.exit(EXIT_ERROR)
-    
-    filename = sys.argv[1]
-    lexer = Lexer(filename, log_enabled=True)
+def show_help():
+    print('\033[34m'
+        #f'Usage: python {sys.argv[0]} <source_file> [<output_file>] [-!|--log] [-no|--no-optimize] [-l|--lexer]\n'
+        f'Usage: python {sys.argv[0]} <source_file> [-!|--log]\n'
+        '\t[-?|--help] show this help\n'
+        '\t[-!|--log] log output using tui\n'
+        '\033[m')
+
+
+def main(filename: str, log_enabled: bool, *args, **kwargs) -> None:
+    # Inicia o Parser com o conteúdo do arquivo
+    #istream = TuiInputStream(filename, lambda c: print(c, end='', flush=True)) if log_enabled else InputStream(filename)
+    istream = InputStream(filename)
+    lexer = Lexer(istream, log_enabled)
     lexer.start()
+    print()  # quebra de linha final
+    
+    if log_enabled:
+        ...
+    else:
+        # TODO
+        ...
 
 
 if __name__ == '__main__':
-    main()
+    from utils import log_warning, log_error, EXIT_ERROR
+    
+    # Verifica se o usuário passou o nome do arquivo
+    if len(sys.argv) < 2:
+        log_error('Error: No file name provided')
+        log_warning('Usage: \033[32m''python' f'\033[m {sys.argv[0]} \033[34m<arquivo_fonte>')
+        sys.exit(EXIT_ERROR)
+    
+    main(filename=sys.argv[1], log_enabled=True)

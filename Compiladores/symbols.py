@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 '''Defines the symbol table.'''
 from utils import log, log_info, log_success, log_warning
 

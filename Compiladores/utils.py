@@ -1,6 +1,7 @@
 '''Cumpiler utilities.'''
 import sys
 
+EXIT_SUCCESS: int = 0
 EXIT_ERROR: int = 1
 
 

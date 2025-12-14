@@ -1,5 +1,7 @@
+#!/usr/bin/env python3
 import sys
 
+from istream import InputStream
 from options import *
 from utils import EXIT_ERROR, log_error
 from lexer import Lexer, Token, Tag, Tags, Id, Type
@@ -16,9 +18,10 @@ class ParseError(Exception):
 class Parser:
     _id_queue: Queue[Id]
 
-    def __init__(self, filename: str, opts: Options):
-        self._lexer = Lexer(filename, bool(opts & Options.LOG))
-        self._lookahead = Token('')
+    def __init__(self, filename: str, opts: int):
+        istream = InputStream(filename)
+        self._lexer = Lexer(istream, bool(opts & Options.LOG))
+        self._lookahead: Token = Token('')
         self._optimize = bool(opts & Options.OPTIMIZE)
         self._sym_table = SymTable()
         self._id_queue = Queue()
@@ -307,7 +310,20 @@ class Parser:
             raise ParseError()
 
 
-def main(*args, **kwargs):
+def main(source_filename: str, options: int, *args, **kwargs):
+    try:
+        #region 3. Inicia o Parser com o conteúdo do arquivo
+        tradutor = Parser(source_filename, options)
+        tradutor.start()
+        print() # quebra de linha final
+        #endregion
+    except FileNotFoundError:
+        log_error(f"Error: The file '{source_filename}' was not found.")
+    # except ParseError:
+    #     log_error("\nErro de Sintaxe")
+
+
+if __name__ == "__main__":
     from utils import log_warning
     
     # Verifica se o usuário passou o nome do arquivo
@@ -315,19 +331,4 @@ def main(*args, **kwargs):
         log_warning('Uso: \033[32m''python' f'\033[m {sys.argv[0]} \033[34m<arquivo_fonte>')
         sys.exit(EXIT_ERROR)
     
-    source_filename = sys.argv[1]
-    
-    try:
-        #region 3. Inicia o Parser com o conteúdo do arquivo
-        tradutor = Parser(source_filename, Options.OPTIMIZE)
-        tradutor.start()
-        print() # quebra de linha final
-        #endregion
-    except FileNotFoundError:
-        log_error(f"Erro: O arquivo '{source_filename}' não foi encontrado.")
-    # except ParseError:
-    #     log_error("\nErro de Sintaxe")
-
-
-if __name__ == "__main__":
-    main()
+    main(source_filename=sys.argv[1], options=Options.OPTIMIZE)
