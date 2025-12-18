@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.layout import Layout
 from rich.live import Live
 from rich.syntax import Syntax
-from enum import Enum
+from rich.text import Text
 import io
 import threading
 import time
@@ -37,15 +37,17 @@ class Tui:
         self.tokens_buf = io.StringIO()
         self.ir_buf = io.StringIO()
         self.code_buf = io.StringIO()
+        self.log_buf = io.StringIO()
         # endregion
 
         # region State
-        # 0: source, 1: tokens, 2: ir, 3: code
+        # 0: source, 1: tokens, 2: ir, 3: code, 4: log
         self.selected_pane = 0
-        self.scroll_offsets = [0, 0, 0, 0]  # number of lines scrolled up (0 = bottom)
+        self.scroll_offsets = [0] * 5  # number of lines scrolled up (0 = bottom)
         self.lock = threading.Lock()
         self.running = True
         self.need_refresh = True
+        self.last_console_size = self.console.size
         # endregion
 
         # region Widgets (single creation to avoid flicker)
@@ -58,55 +60,66 @@ class Tui:
         self.tokens_panel = Panel("", title="Tokens", border_style="green")
         self.ir_panel = Panel("", title="IR", border_style="yellow")
         self.code_panel = Panel("", title="Codegen", border_style="magenta")
+        self.log_panel = Panel("", title="Debug Output", border_style="indian_red")
         # endregion
 
-        # region Layout
-        def build_layout():
-            layout = Layout()
+        # Build initial layout
+        self.layout = self.build_layout()
 
-            match self.mode:
-                case Tui.Mode.LEXER:
-                    layout.split_row(
-                        Layout(name="source"),
-                        Layout(name="tokens"),
-                    )
-                case Tui.Mode.PARSER:
-                    layout.split_row(
-                        Layout(name="source"),
-                        Layout(name="tokens"),
-                        Layout(name="ir"),
-                    )
-                case Tui.Mode.CODE_GEN:
-                    layout.split(
-                        Layout(name="top"),
-                        Layout(name="bottom"),
-                    )
-                    layout["top"].split_row(
-                        Layout(name="source"),
-                        Layout(name="tokens"),
-                    )
-                    layout["bottom"].split_row(
-                        Layout(name="ir"),
-                        Layout(name="code"),
-                    )
-            mode: int = self.mode
-            # assign panels once (placeholders)
-            layout["source"].update(self.source_panel)
-            layout["tokens"].update(self.tokens_panel)
+    def build_layout(self):
+        """Build or rebuild layout based on current console size"""
+        layout = Layout()
+        console_height = self.console.size.height
 
-            if mode < Tui.Mode.PARSER:
-                return layout
+        # Calculate log panel height (25% of console height, minimum 4 lines)
+        log_height = max(4, int(console_height * 0.25))
+
+        # Split main area and log panel
+        layout.split(
+            Layout(name="main", ratio=(console_height - log_height)),
+            Layout(name="log", size=log_height),
+        )
+
+        # Now split the main area based on mode
+        if self.mode == Tui.Mode.LEXER:
+            layout["main"].split_row(
+                Layout(name="source", ratio=1),
+                Layout(name="tokens", ratio=1),
+            )
+        elif self.mode == Tui.Mode.PARSER:
+            layout["main"].split_row(
+                Layout(name="source", ratio=1),
+                Layout(name="tokens", ratio=1),
+                Layout(name="ir", ratio=1),
+            )
+        else:  # CODE_GEN
+            # For code gen, split main area vertically first
+            layout["main"].split(
+                Layout(name="upper"),
+                Layout(name="lower"),
+            )
+            layout["main"]["upper"].split_row(
+                Layout(name="source", ratio=1),
+                Layout(name="tokens", ratio=1),
+            )
+            layout["main"]["lower"].split_row(
+                Layout(name="ir", ratio=1),
+                Layout(name="code", ratio=1),
+            )
+
+        # Assign panels
+        layout["source"].update(self.source_panel)
+        layout["tokens"].update(self.tokens_panel)
+
+        if self.mode >= Tui.Mode.PARSER:
             layout["ir"].update(self.ir_panel)
 
-            if mode < Tui.Mode.CODE_GEN:
-                return layout
+        if self.mode >= Tui.Mode.CODE_GEN:
             layout["code"].update(self.code_panel)
 
-            return layout
+        layout["log"].update(self.log_panel)
 
-        self.layout: Layout = build_layout()
-        # endregion
-        self._live: Live | None = None  # Live instance on run
+        return layout
 
     # region Helpers
     @staticmethod
@@ -115,8 +128,7 @@ class Tui:
             return []
         return text.rstrip("\n").split("\n")
 
-    @staticmethod
-    def compute_visible(lines: list[str], pane_height: int, offset: int):
+    def compute_visible(self, lines: list[str], pane_height: int, offset: int):
         """
         Given a list of lines, a pane height (usable lines), and a scroll offset,
         return the visible lines (bottom-aligned).
@@ -132,21 +144,53 @@ class Tui:
         return lines[start : start + usable], offset
 
     def render_box(self, name: str, lines_list: list[str], syntax=False):
+        # Check if console was resized and rebuild layout if needed
+        if self.console.size != self.last_console_size:
+            self.layout = self.build_layout()
+            self.last_console_size = self.console.size
 
-        # If layout size unknown (first frames), supply safe fallback
-        size = self.layout[name].size
-        height: int
-        if size is None:
-            size = self.console.size
-            height = size.height if self.mode != Tui.Mode.CODE_GEN else size.height // 2  # type: ignore
+        # Get layout size for this pane
+        try:
+            # For nested layouts in CODE_GEN mode
+            if self.mode == Tui.Mode.CODE_GEN and name in [
+                "source",
+                "tokens",
+                "ir",
+                "code",
+            ]:
+                if name in ["source", "tokens"]:
+                    size = self.layout["main"]["upper"][name].size
+                else:
+                    size = self.layout["main"]["lower"][name].size
+            else:
+                size = self.layout[name].size
+        except:
+            # Fallback for any layout access issues
+            size = None
+
+        pane_index = {"source": 0, "tokens": 1, "ir": 2, "code": 3, "log": 4}[name]
+
+        # Calculate pane height
+        if size and hasattr(size, "height"):
+            height = size.height
         else:
-            height = size.height  # type: ignore
+            # Estimate height based on console size and mode
+            console_height = self.console.size.height
+            if name == "log":
+                height = max(4, int(console_height * 0.25))
+            elif self.mode == Tui.Mode.CODE_GEN:
+                # Half of main area for upper/lower, then split between panes
+                main_height = console_height - max(4, int(console_height * 0.25))
+                height = max(6, main_height // 2)
+            else:
+                height = max(10, console_height // 2)
 
-        pane_index = {"source": 0, "tokens": 1, "ir": 2, "code": 3}[name]
         with self.lock:
             offset: int = self.scroll_offsets[pane_index]
+
         visible, offset = self.compute_visible(lines_list, height, offset)
-        # update back the clamped offset
+
+        # Update back the clamped offset
         with self.lock:
             self.scroll_offsets[pane_index] = offset
 
@@ -156,18 +200,35 @@ class Tui:
             style = "bold cyan" if self.selected_pane == 0 else "cyan"
             return Panel(syn, title="Source", border_style=style)
         else:
-            title = {"tokens": "Tokens", "ir": "IR", "code": "Codegen"}[name]
-            style_map = {"tokens": "green", "ir": "yellow", "code": "magenta"}
-            idx_map = {"tokens": 1, "ir": 2, "code": 3}
+            title = {
+                "tokens": "Tokens",
+                "ir": "IR",
+                "code": "Codegen",
+                "log": "Debug Output",
+            }[name]
+            style_map = {
+                "tokens": "green",
+                "ir": "yellow",
+                "code": "magenta",
+                "log": "indian_red",
+            }
+            idx_map = {"tokens": 1, "ir": 2, "code": 3, "log": 4}
             style = (
                 ("bold " + style_map[name])
                 if self.selected_pane == idx_map[name]
                 else style_map[name]
             )
+
+            # Don't set fixed height on the Panel - let the Layout handle it
             return Panel("\n".join(visible), title=title, border_style=style)
 
     def render(self):
-        # Read current buffer contents and render panels using current scroll offsets
+        # Check for console resize and rebuild layout if needed
+        if self.console.size != self.last_console_size:
+            self.layout = self.build_layout()
+            self.last_console_size = self.console.size
+
+        # Update all panels
         self.layout["source"].update(
             self.render_box(
                 "source", self.lines_of(self.source_buf.getvalue()), syntax=True
@@ -176,31 +237,34 @@ class Tui:
         self.layout["tokens"].update(
             self.render_box("tokens", self.lines_of(self.tokens_buf.getvalue()))
         )
-        mode: int = self.mode
-        if mode < Tui.Mode.PARSER:
-            return self.layout
 
-        self.layout["ir"].update(
-            self.render_box("ir", self.lines_of(self.ir_buf.getvalue()))
-        )
-        if mode < Tui.Mode.CODE_GEN:
-            return self.layout
+        if self.mode >= Tui.Mode.PARSER:
+            self.layout["ir"].update(
+                self.render_box("ir", self.lines_of(self.ir_buf.getvalue()))
+            )
+            self.layout["log"].update(
+                self.render_box("log", self.lines_of(self.log_buf.getvalue()))
+            )
 
-        self.layout["code"].update(
-            self.render_box("code", self.lines_of(self.code_buf.getvalue()))
-        )
+        if self.mode >= Tui.Mode.CODE_GEN:
+            self.layout["code"].update(
+                self.render_box("code", self.lines_of(self.code_buf.getvalue()))
+            )
+
         return self.layout
 
     # endregion
 
     # region API used by your compiler to append data
-    def log_source(self, line: str, end="\n"):
+    def log_source(self, line: str, end="\n", flush=True):
         with self.lock:
             self.source_buf.write(f"{line}{end}")
             self.scroll_offsets[0] = 0
-        self.mark_refresh()
+        if flush:
+            self.update()
+        else:
+            self.mark_refresh()
 
-    # FIX -> Remove line breaks
     def log_tokens(self, line: str = "", end="\n", flush=True):
         with self.lock:
             self.tokens_buf.write(f"{line}{end}")
@@ -210,17 +274,32 @@ class Tui:
         else:
             self.mark_refresh()
 
-    def log_ir(self, line: str, end="\n"):
+    def log_ir(self, line: str, end="\n", flush=True):
         with self.lock:
             self.ir_buf.write(f"{line}{end}")
             self.scroll_offsets[2] = 0
-        self.mark_refresh()
+        if flush:
+            self.update()
+        else:
+            self.mark_refresh()
 
-    def log_code(self, line: str, end="\n"):
+    def log_code(self, line: str, end="\n", flush=True):
         with self.lock:
             self.code_buf.write(f"{line}{end}")
             self.scroll_offsets[3] = 0
-        self.mark_refresh()
+        if flush:
+            self.update()
+        else:
+            self.mark_refresh()
+
+    def log_debug(self, line: str, end="\n", flush=True):
+        with self.lock:
+            self.log_buf.write(f"{line}{end}")
+            self.scroll_offsets[4] = 0
+        if flush:
+            self.update()
+        else:
+            self.mark_refresh()
 
     def mark_refresh(self):
         with self.lock:
@@ -252,7 +331,7 @@ class Tui:
                 if s in ("q", "\x03"):  # q or Ctrl-C
                     self.running = False
                     break
-                if s in ("1", "2", "3", "4"):
+                if s in ("1", "2", "3", "4", "5"):
                     self.selected_pane = int(s) - 1
                     self.mark_refresh()
                     continue
@@ -295,19 +374,34 @@ class Tui:
                     continue
                 if s == "g":  # go top
                     with self.lock:
-                        name = ["source", "tokens", "ir", "code"][self.selected_pane]
+                        name = ["source", "tokens", "ir", "code", "log"][
+                            self.selected_pane
+                        ]
                         lines = (
                             {
                                 "source": self.source_buf,
                                 "tokens": self.tokens_buf,
                                 "ir": self.ir_buf,
                                 "code": self.code_buf,
+                                "log": self.log_buf,
                             }[name]
                             .getvalue()
                             .splitlines()
                         )
-                        size = self.layout[name].size
-                        h = size.height if size and size.height else 20  # type: ignore
+                        size = self.console.size
+                        # Estimate pane height based on console size and mode
+                        if name == "log":
+                            h = max(4, int(size.height * 0.25))
+                        elif self.mode == Tui.Mode.CODE_GEN and name in [
+                            "source",
+                            "tokens",
+                            "ir",
+                            "code",
+                        ]:
+                            main_height = size.height - max(4, int(size.height * 0.25))
+                            h = max(6, main_height // 2)
+                        else:
+                            h = max(10, size.height // 2)
                         usable = max(h - 2, 1)
                         max_off = max(0, len(lines) - usable)
                         self.scroll_offsets[self.selected_pane] = max_off
@@ -379,6 +473,7 @@ if __name__ == "__main__":
                 ui.log_tokens(f"TOKEN NUM {count}")
                 ui.log_ir(f"(Assign x{count} {count})")
                 ui.log_code(f"t{count} = {count}")
+                ui.log_debug(f"Generated line {count}")
                 count += 1
             elif not generation_finished:
                 # mark finished and write a status line

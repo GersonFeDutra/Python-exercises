@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
+from functools import partial
 import sys
+from typing import Callable
 
-from istream import InputStream
+from istream import InputStream, TuiInputStream
 from options import *
-from utils import EXIT_ERROR, log_error
-from lexer import Lexer, Token, Tag, Tags, Id, Type
+from tui import Tui
+from utils import EXIT_ERROR, log, log_error
+from lexer import Lexer, Num, Token, Tag, Tags, Id, Type
 from symbols import Symbol, SymTable
 from utils import log_warning
 from queue import SimpleQueue as Queue
@@ -19,14 +22,21 @@ class ParseError(Exception):
 class Parser:
     _id_queue: Queue[Id]
 
-    def __init__(self, filename: str, opts: int):
-        istream = InputStream(filename)
+    def __init__(
+        self,
+        lexer: Lexer,
+        logger: Callable = log,
+        warn_logger: Callable = log_warning,
+        optimize: bool = True,
+    ):
         # FIXME
-        self._lexer = Lexer(istream, bool(opts & Options.LOG))
+        self._lexer = lexer
         self._lookahead: Token = Token("")
-        self._optimize = bool(opts & Options.OPTIMIZE)
+        self._optimize = optimize
         self._sym_table = SymTable()
         self._id_queue = Queue()
+        self._log = logger
+        self._warn = warn_logger
 
         if self._optimize:
             self.accumulator: int = 0
@@ -62,7 +72,7 @@ class Parser:
             # stmt -> lval_lst rval_lst
             if self.lval_lst():
                 if not self.declr_or_rval_lst():
-                    log_warning(
+                    self._warn(
                         f"[warning] standalone expression at line :{self._lexer.line}."
                     )
                 continue
@@ -88,7 +98,7 @@ class Parser:
         #     raise ParseError(f"Erro na linha {self._lexer.line}:"
         #                      "era esperado '{' no início do bloco.")
 
-        print("{")  # ação semântica: imprime '{'
+        self._log("{")  # ação semântica: imprime '{'
 
         # 1. Salva tabela atual
         saved_table = self._sym_table  # ação semântica
@@ -104,7 +114,7 @@ class Parser:
                 "era esperado '}' no final do bloco."
             )
         self.match(Tag("}"))
-        print("}")  # ação semântica: imprime '}'
+        self._log("\n}", end="")  # ação semântica: imprime '}'
 
         # ação semântica: restaura tabela anterior
         self._sym_table = saved_table
@@ -138,7 +148,7 @@ class Parser:
             # if symbol is None:
             #     raise ParseError(f"Erro na linha {self._lexer.line}:"
             #                      f" a variável '{name}' não foi declarada.")
-            # print(f'{name}', end='', flush=True)  # ação semântica
+            # self._log(f'{name}', end='', flush=True)  # ação semântica
 
             # lval_lst -> lval , lval_lst
             if self._lookahead == ",":
@@ -185,7 +195,7 @@ class Parser:
                         f" a variável '{name}' já foi declarada no escopo atual."
                     )
                 # ação semântica: imprime a declaração
-                print(f"{name} : {t}", flush=True)
+                self._log(f"{name} : {t}", flush=True)
 
             return True
         elif self._lookahead == "=":
@@ -211,7 +221,7 @@ class Parser:
                 return True
 
             # rval -> expr
-            print(f" {id}=", end="", flush=True)  # ação semântica
+            self._log(f"{id}=", end="", flush=True)  # ação semântica
             self.opers()
 
     def queue_empty(self) -> bool:
@@ -243,11 +253,11 @@ class Parser:
     #     name = ''
     #     ...
     #     s = Symbol(type, name)
-    #     print("Declarado", s)
+    #     self._log("Declarado", s)
     #
     #     # insere a variável na tabela de símbolos
     #     if not self._sym_table.insert(name, s):
-    #         print('Erro: a variável já foi declarada no escopo atual')
+    #         self._log('Erro: a variável já foi declarada no escopo atual')
     #         raise ParseError()
 
     def opers(self):
@@ -272,23 +282,23 @@ class Parser:
                     self.accumulator -= self.digit()
                 # Produção vazia (return)
                 else:
-                    print(self.accumulator, end="", flush=True)
+                    self._log(self.accumulator, end="", flush=True)
                     return
         else:
             while True:
                 # Regra: oper -> + digit { print(+) } oper
                 if self._lookahead == "+":
                     self.match(Tag("+"))
-                    print(" ", end="", flush=True)
+                    self._log(" ", end="", flush=True)
                     self.digit()
-                    print("+", end="", flush=True)
+                    self._log("+", end="", flush=True)
 
                 # Regra: oper -> - digit { print(-) } oper
                 elif self._lookahead == "-":
                     self.match(Tag("-"))
-                    print(" ", end="", flush=True)
+                    self._log(" ", end="", flush=True)
                     self.digit()
-                    print("-", end="", flush=True)
+                    self._log("-", end="", flush=True)
 
                 # Produção vazia (return)
                 else:
@@ -303,9 +313,11 @@ class Parser:
         Regra: digit -> digit { print(digit) }
         """
         if self._lookahead.tag == Tags.NUM:
+            assert isinstance(self._lookahead, Num)
+            num: Num = self._lookahead
             self._lexer._log(f"{self._lookahead}", end=" ", flush=True)
             self.match(self._lookahead.tag)
-            return self._lookahead.tag.value
+            return num.value
         else:
             log_error(
                 f"\nErro na linha {self._lexer.line}:"
@@ -323,16 +335,46 @@ class Parser:
 
 
 def main(source_filename: str, options: int, *args, **kwargs):
-    try:
-        # region 3. Inicia o Parser com o conteúdo do arquivo
-        tradutor = Parser(source_filename, options)
-        tradutor.start()
-        print()  # quebra de linha final
-        # endregion
-    except FileNotFoundError:
-        log_error(f"Error: The file '{source_filename}' was not found.")
-    # except ParseError:
-    #     log_error("\nErro de Sintaxe")
+    if options & Options.LOG:
+        tui = Tui(Tui.Mode.PARSER)
+        istream: TuiInputStream  # pyright: ignore[reportRedeclaration]
+        try:
+            istream = TuiInputStream(
+                source_filename, partial(tui.log_source, end="")
+            )  # pyright: ignore[reportAssignmentType]
+        except FileNotFoundError:
+            log_error(f"Error: The file '{source_filename}' was not found.")
+        lexer = Lexer(
+            istream, tui.log_tokens  # pyright: ignore[reportPossiblyUnboundVariable]
+        )
+        # Inicia o Parser com o conteúdo do arquivo
+        parser = Parser(
+            lexer,
+            tui.log_ir,
+            lambda message, *args, **kwargs: tui.log_debug(
+                f"\033[33m{message}", *args, **kwargs
+            ),
+            optimize=bool(options & Options.OPTIMIZE),
+        )
+        tui.run(parser.start, True)
+    else:
+        istream: InputStream
+        try:
+            istream = InputStream(source_filename)
+        except FileNotFoundError:
+            log_error(f"Error: The file '{source_filename}' was not found.")
+        lexer = Lexer(
+            istream,  # pyright: ignore[reportPossiblyUnboundVariable]
+            lambda *args, **kwargs: None,
+        )
+        # Inicia o Parser com o conteúdo do arquivo
+        parser = Parser(lexer, optimize=bool(options & Options.OPTIMIZE))
+        parser.start()
+        parser._log()  # quebra de linha final
+
+
+# except ParseError:
+#     log_error("\nErro de Sintaxe")
 
 
 if __name__ == "__main__":
@@ -345,4 +387,4 @@ if __name__ == "__main__":
         )
         sys.exit(EXIT_ERROR)
 
-    main(source_filename=sys.argv[1], options=Options.OPTIMIZE)
+    main(source_filename=sys.argv[1], options=Options.OPTIMIZE | Options.LOG)
