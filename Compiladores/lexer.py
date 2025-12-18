@@ -7,7 +7,7 @@ from istream import TuiInputStream, InputStream
 from functools import partial
 
 
-class Tag():
+class Tag:
     name = property(lambda self: self._name, None, None, "Nome da tag - para debug.")
 
     def __init__(self, value: int | str, name: str | None = None):
@@ -15,17 +15,27 @@ class Tag():
             self.value = ord(value)
             self._name = value
         else:
-            assert name is not None, "name deve ser fornecido se o valor for um inteiro."
+            assert (
+                name is not None
+            ), "name deve ser fornecido se o valor for um inteiro."
             self.value = value
             self._name = name
 
-    def __eq__(self, value: 'Tag | str') -> bool: # type: ignore
-        return isinstance(value, Tag) and self.value == value.value \
-            or isinstance(value, str) and self._name == value
+    def __eq__(self, value: "Tag | str") -> bool:  # type: ignore
+        return (
+            isinstance(value, Tag)
+            and self.value == value.value
+            or isinstance(value, str)
+            and self._name == value
+        )
 
-    def __ne__(self, value: 'Tag | str') -> bool: # type: ignore
-        return isinstance(value, Tag) and self.value != value.value \
-            or isinstance(value, str) and self._name != value
+    def __ne__(self, value: "Tag | str") -> bool:  # type: ignore
+        return (
+            isinstance(value, Tag)
+            and self.value != value.value
+            or isinstance(value, str)
+            and self._name != value
+        )
 
     def __str__(self) -> str:
         return self._name
@@ -33,11 +43,11 @@ class Tag():
 
 class Tags:
     ...
-    NUM = Tag(256, 'NUM')
-    ID = Tag(257, 'ID')
-    TYPE = Tag(258, 'TYPE')
-    TRUE = Tag(259, 'TRUE') # apenas para ilustrar
-    FALSE = Tag(260, 'FALSE') # apenas para ilustrar
+    NUM = Tag(256, "NUM")
+    ID = Tag(257, "ID")
+    TYPE = Tag(258, "TYPE")
+    TRUE = Tag(259, "TRUE")  # apenas para ilustrar
+    FALSE = Tag(260, "FALSE")  # apenas para ilustrar
     # TODO
     # CHAR = Tag(261, 'CHAR')
     # STR = Tag(262, 'STR')
@@ -45,37 +55,43 @@ class Tags:
     # FLOAT = Tag(264, 'FLOAT')
     # PTR = Tag(265, 'PTR')
 
-class Lexer:
-    _id_table: dict[str, 'Token | Id | Type'] = {}
-    line = property(lambda self: self._line, None, None, "Current line number being parsed.")
 
-    def __init__(self, istream: InputStream | TuiInputStream,
-                 logger: Callable[..., None] = lambda *args, **kwargs: None):
+class Lexer:
+    _id_table: dict[str, "Token | Id | Type"] = {}
+    line = property(
+        lambda self: self._line, None, None, "Current line number being parsed."
+    )
+
+    def __init__(
+        self,
+        istream: InputStream | TuiInputStream,
+        logger: Callable[..., None] = lambda *args, **kwargs: None,
+    ):
         self._line = 1
-        self._peek = ' '
+        self._peek = " "
         self._istream = istream
         self._log = logger
         self._init_id_table()
         # TODO -> detect empty lines: <https://chatgpt.com/g/g-p-6917e068d6c481918f28825411103d8c-compilers/c/69374318-686c-8330-a4db-d750c2e61e83>
-        #self._line_emitted_token = False
+        # self._line_emitted_token = False
 
     def _init_id_table(self):
         self._id_table = {
             "true": Token(Tags.TRUE),
             "false": Token(Tags.FALSE),
-            "int": Type('int'),  # 32 bits
-            "float": Type('float'),  # 32 bits
-            "double": Type('double'),  # 64 bits
-            "bool": Type('bool'),
-            "char": Type('char'),
-            "str": Type('str'),
-            "i8": Type('i8'),
-            "i16": Type('i16'),
-            "u16": Type('u16'),
-            "u32": Type('u32'),
-            "i64": Type('i64'),
-            "u64": Type('u64'),
-            "void": Type('void'),  # for pointers and functions
+            "int": Type("int"),  # 32 bits
+            "float": Type("float"),  # 32 bits
+            "double": Type("double"),  # 64 bits
+            "bool": Type("bool"),
+            "char": Type("char"),
+            "str": Type("str"),
+            "i8": Type("i8"),
+            "i16": Type("i16"),
+            "u16": Type("u16"),
+            "u32": Type("u32"),
+            "i64": Type("i64"),
+            "u64": Type("u64"),
+            "void": Type("void"),  # for pointers and functions
         }
 
     def _open_source_file(self, filename: str):
@@ -85,7 +101,7 @@ class Lexer:
 
         :param filename: nome do arquivo a ser aberto
         """
-        with open(filename, 'r') as file:
+        with open(filename, "r") as file:
             self._source_code = file.read()
 
     def _get_next_char(self):
@@ -94,105 +110,105 @@ class Lexer:
         while not self._istream.eof_reached:
             char = self._istream.get_char()
             # Se for espaço ou tabulação, ignora
-            if char in '\t':
+            if char in "\t":
                 continue
-            if char == '\n' or (char == '\r' and self._istream.peek() == '\n'):
+            if char == "\n" or (char == "\r" and self._istream.peek() == "\n"):
                 self._line += 1
-                return '\n'
+                return "\n"
             return char
-        return '' # Fim da entrada
+        return ""  # Fim da entrada
 
     def scan(self):
-        '''Implementação do método de varredura (scan) do lexer.'''
-        #region 1. Conta o número de linhas, ignorando os espaços em branco
+        """Implementação do método de varredura (scan) do lexer."""
+        # region 1. Conta o número de linhas, ignorando os espaços em branco
         while self._peek.isspace():
-            if self._peek == '\n':
+            if self._peek == "\n":
                 self._log()
-                self._log(f'Linha {self._line}: ', end='')
+                self._log(f"Linha {self._line}: ", end="")
             self._peek = self._get_next_char()
-        #endregion
+        # endregion
 
-        #region 2. Ignora comentários [ #...\n and /*...*/ ]
-        if self._peek == '#':
-            while self._peek != '\n' and self._peek != '':
+        # region 2. Ignora comentários [ #...\n and /*...*/ ]
+        if self._peek == "#":
+            while self._peek != "\n" and self._peek != "":
                 self._peek = self._get_next_char()
 
-        if self._peek == '/' and self._istream.peek() == '*':
-            while self._peek != '*' or self._istream.peek() != '/':
+        if self._peek == "/" and self._istream.peek() == "*":
+            while self._peek != "*" or self._istream.peek() != "/":
                 self._peek = self._get_next_char()
             self._get_next_char()
             self._peek = self._get_next_char()
-        #endregion
+        # endregion
 
-        #region 2. Trata números
+        # region 2. Trata números
         if self._peek.isdigit():
-            #region Inteiros
+            # region Inteiros
             num_str = ""
             while self._peek.isdigit():
                 num_str += self._peek
                 self._peek = self._get_next_char()
-            
-            if self._peek != '.':
+
+            if self._peek != ".":
                 num = int(num_str)
-                self._log(f"<NUM, {num}> ", end='')
+                self._log(f"<NUM, {num}> ", end="")
                 return Num(num)
-            #endregion
+            # endregion
             else:
-                #region Ponto Flutuante
+                # region Ponto Flutuante
                 num_str += self._peek
                 self._peek = self._get_next_char()
                 while self._peek.isdigit():
                     num_str += self._peek
                     self._peek = self._get_next_char()
-                #endregion
-        #endregion
+                # endregion
+        # endregion
 
         # TODO -> Tratar identificadores genéricos de forma diferente de palavras-reservadas
-        #region 3. Trata identificadores e palavras reservadas
+        # region 3. Trata identificadores e palavras reservadas
         if self._peek.isalpha():
             id_str = ""
             while self._peek.isalpha():
                 id_str += self._peek
                 self._peek = self._get_next_char()
-            
+
             if id_str in self._id_table:
                 # para debugging
                 token_found: Token | Type | Id = self._id_table[id_str]
                 if token_found is Type:
-                    #self._log(f'<{id_str}> ', end='')
-                    self._log(f'<{token_found.tag.name}, {token_found.name}> ', end='')
+                    # self._log(f'<{id_str}> ', end='')
+                    self._log(f"<{token_found.tag.name}, {token_found.name}> ", end="")
                 elif token_found is Id:
-                    self._log(f"<{token_found.tag.name}, {token_found.name}> ", end='')
+                    self._log(f"<{token_found.tag.name}, {token_found.name}> ", end="")
                 else:
-                    self._log(f"<{token_found.tag.name}> ", end='')
+                    self._log(f"<{token_found.tag.name}> ", end="")
                 return token_found
 
             # se o identificador não estiver na tabela, cria um novo
             else:
                 new_id = Id(id_str)
                 self._id_table[id_str] = new_id
-                self._log(f"<ID, {new_id.name}> ", end='')
+                self._log(f"<ID, {new_id.name}> ", end="")
                 return new_id
-        #endregion
+        # endregion
 
-        #region 4. Trata operadores
-        t_oper = Token(self._peek) # pyright: ignore[reportArgumentType]
-        if t_oper.tag.name == '':
+        # region 4. Trata operadores
+        t_oper = Token(self._peek)  # pyright: ignore[reportArgumentType]
+        if t_oper.tag.name == "":
             return t_oper  # EOF
-        if t_oper.tag.name in [' ', '\r', '\n', '\t']:
+        if t_oper.tag.name in [" ", "\r", "\n", "\t"]:
             # TODO -> better account for line breaker
             self._peek = self._get_next_char()
             return self.scan()  # ignora caracteres em branco
         else:
-            self._log(f"<'{t_oper.tag}'> ", end='')
+            self._log(f"<'{t_oper.tag}'> ", end="")
         self._peek = self._get_next_char()
-        #endregion
+        # endregion
 
         return t_oper
 
     def start(self):
-        self._log("Linha 1: ", end='')
-        while (self._peek != ''):
+        self._log("Linha 1: ", end="")
+        while self._peek != "":
             self.scan()
         self._log()
 
@@ -200,23 +216,35 @@ class Lexer:
 class Token:
     def __init__(self, tag: Tag | str | int):
         if isinstance(tag, int):
-            self.tag = Tag(tag, chr(tag) if 32 <= tag <= 126 else f'TAG_{tag}')
+            self.tag = Tag(tag, chr(tag) if 32 <= tag <= 126 else f"TAG_{tag}")
         elif isinstance(tag, str):
-            if tag == '':
+            if tag == "":
                 self.tag = Tag(0, tag)
             else:
                 self.tag = Tag(ord(tag), tag)
         else:
-            assert isinstance(tag, Tag), f'{tag}'
+            assert isinstance(tag, Tag), f"{tag}"
             self.tag = tag
 
-    def __eq__(self, value: Tag | str) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
-        return isinstance(value, Tag) and self.tag == value \
-            or isinstance(value, str) and self.tag.name == value
+    def __eq__(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, value: Tag | str
+    ) -> bool:
+        return (
+            isinstance(value, Tag)
+            and self.tag == value
+            or isinstance(value, str)
+            and self.tag.name == value
+        )
 
-    def __ne__(self, value: Tag | str) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
-        return isinstance(value, Tag) and self.tag != value \
-            or isinstance(value, str) and self.tag.name != value
+    def __ne__(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, value: Tag | str
+    ) -> bool:
+        return (
+            isinstance(value, Tag)
+            and self.tag != value
+            or isinstance(value, str)
+            and self.tag.name != value
+        )
 
     def __str__(self) -> str:
         return str(self.tag)
@@ -224,6 +252,7 @@ class Token:
 
 class Id(Token):
     name: str
+
     def __init__(self, name: str):
         super().__init__(Tags.ID)
         self.name = name
@@ -248,20 +277,22 @@ class Num(Token):
 
 
 def show_help():
-    print('\033[34m'
-        #f'Usage: python {sys.argv[0]} <source_file> [<output_file>] [-!|--log] [-no|--no-optimize] [-l|--lexer]\n'
-        f'Usage: python {sys.argv[0]} <source_file> [-!|--log]\n'
-        '\t[-?|--help] show this help\n'
-        '\t[-!|--log] log output using tui\n'
-        '\033[m')
+    print(
+        "\033[34m"
+        # f'Usage: python {sys.argv[0]} <source_file> [<output_file>] [-!|--log] [-no|--no-optimize] [-l|--lexer]\n'
+        f"Usage: python {sys.argv[0]} <source_file> [-!|--log]\n"
+        "\t[-?|--help] show this help\n"
+        "\t[-!|--log] log output using tui\n"
+        "\033[m"
+    )
 
 
 def main(filename: str, log_enabled: bool, *args, **kwargs) -> None:
     if log_enabled:
         from tui import Tui
 
-        ui = Tui()
-        istream = TuiInputStream(filename, partial(ui.log_source, end=''))
+        ui = Tui(mode=Tui.Mode.LEXER)
+        istream = TuiInputStream(filename, partial(ui.log_source, end=""))
         lexer = Lexer(istream, ui.log_tokens)
         ui.run(lexer.start, hold=True)
     else:
@@ -270,13 +301,15 @@ def main(filename: str, log_enabled: bool, *args, **kwargs) -> None:
         lexer.start()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     from utils import log_warning, log_error, EXIT_ERROR
-    
+
     # Verifica se o usuário passou o nome do arquivo
     if len(sys.argv) < 2:
-        log_error('Error: No file name provided')
-        log_warning('Usage: \033[32m''python' f'\033[m {sys.argv[0]} \033[34m<arquivo_fonte>')
+        log_error("Error: No file name provided")
+        log_warning(
+            "Usage: \033[32m" "python" f"\033[m {sys.argv[0]} \033[34m<arquivo_fonte>"
+        )
         sys.exit(EXIT_ERROR)
-    
+
     main(filename=sys.argv[1], log_enabled=True)
