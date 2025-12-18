@@ -1,8 +1,10 @@
 #!./venv/bin/python3
 
 import sys
+from typing import Callable, Optional
 from utils import EXIT_ERROR, log
 from istream import TuiInputStream, InputStream
+from functools import partial
 
 
 class Tag():
@@ -47,14 +49,12 @@ class Lexer:
     _id_table: dict[str, 'Token | Id | Type'] = {}
     line = property(lambda self: self._line, None, None, "Current line number being parsed.")
 
-    def __init__(self, istream: InputStream | TuiInputStream, log_enabled: bool = False):
+    def __init__(self, istream: InputStream | TuiInputStream,
+                 logger: Callable[..., None] = lambda *args, **kwargs: None):
         self._line = 1
         self._peek = ' '
         self._istream = istream
-        if log_enabled:
-            self._log = log
-        else:
-            self._log = lambda *args, **kwargs: None
+        self._log = logger
         self._init_id_table()
         # TODO -> detect empty lines: <https://chatgpt.com/g/g-p-6917e068d6c481918f28825411103d8c-compilers/c/69374318-686c-8330-a4db-d750c2e61e83>
         #self._line_emitted_token = False
@@ -257,18 +257,17 @@ def show_help():
 
 
 def main(filename: str, log_enabled: bool, *args, **kwargs) -> None:
-    # Inicia o Parser com o conteúdo do arquivo
-    #istream = TuiInputStream(filename, lambda c: print(c, end='', flush=True)) if log_enabled else InputStream(filename)
-    istream = InputStream(filename)
-    lexer = Lexer(istream, log_enabled)
-    lexer.start()
-    print()  # quebra de linha final
-    
     if log_enabled:
-        ...
+        from tui import Tui
+
+        ui = Tui()
+        istream = TuiInputStream(filename, partial(ui.log_source, end=''))
+        lexer = Lexer(istream, ui.log_tokens)
+        ui.run(lexer.start, hold=True)
     else:
-        # TODO
-        ...
+        istream = InputStream(filename)
+        lexer = Lexer(istream, log)
+        lexer.start()
 
 
 if __name__ == '__main__':

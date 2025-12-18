@@ -20,6 +20,7 @@ class Parser:
 
     def __init__(self, filename: str, opts: int):
         istream = InputStream(filename)
+        # FIXME
         self._lexer = Lexer(istream, bool(opts & Options.LOG))
         self._lookahead: Token = Token('')
         self._optimize = bool(opts & Options.OPTIMIZE)

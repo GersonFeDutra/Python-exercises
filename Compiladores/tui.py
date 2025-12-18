@@ -3,7 +3,7 @@
 Rich 2x2 live UI with keyboard-controlled per-pane scrolling.
 Demo generator now stops after MAX_GEN lines so you can test interactively.
 """
-from typing import Optional
+from typing import Callable, Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.layout import Layout
@@ -23,14 +23,14 @@ class Tui:
 
     def __init__(self):
         self.console = Console()
-
+        
         #region Buffers
         self.source_buf = io.StringIO()
         self.tokens_buf = io.StringIO()
         self.ir_buf     = io.StringIO()
         self.code_buf   = io.StringIO()
         #endregion
-
+        
         #region State
         # 0: source, 1: tokens, 2: ir, 3: code
         self.selected_pane = 0
@@ -39,7 +39,7 @@ class Tui:
         self.running = True
         self.need_refresh = True
         #endregion
-
+        
         #region Widgets (single creation to avoid flicker)
         self.syntax_widget = Syntax('', 'c', line_numbers=True, theme='monokai', word_wrap=False)
         self.source_panel = Panel(self.syntax_widget, title='Source', border_style='cyan')
@@ -47,7 +47,7 @@ class Tui:
         self.ir_panel     = Panel('', title='IR', border_style='yellow')
         self.code_panel   = Panel('', title='Codegen', border_style='magenta')
         #endregion
-
+        
         #region Layout
         def build_layout():
             layout = Layout()
@@ -70,19 +70,20 @@ class Tui:
             layout['ir'].update(self.ir_panel)
             layout['code'].update(self.code_panel)
             return layout
-
+        
         self.layout: Layout = build_layout()
         #endregion
+        self._live: Live | None = None  # Live instance on run
 
     #region Helpers
     @staticmethod
-    def lines_of(text: str):
+    def lines_of(text: str) -> list[str]:
         if not text:
             return []
         return text.rstrip('\n').split('\n')
 
     @staticmethod
-    def compute_visible(lines, pane_height, offset):
+    def compute_visible(lines: list[str], pane_height: int, offset: int):
         '''
         Given a list of lines, a pane height (usable lines), and a scroll offset,
         return the visible lines (bottom-aligned).
@@ -97,13 +98,20 @@ class Tui:
         start = max(0, total - usable - offset)
         return lines[start:start + usable], offset
 
-    def render_box(self, name, lines_list, syntax=False):
+    def render_box(self, name: str, lines_list: list[str], syntax=False):
+
         # If layout size unknown (first frames), supply safe fallback
         size = self.layout[name].size
-        height = size.height if size and size.height else 20 # type: ignore
+        height: int
+        if size is None:
+            size = self.console.size
+            height = size.height // 2 # type: ignore
+        else:
+            height = size.height # type: ignore
+
         pane_index = {'source':0,'tokens':1,'ir':2,'code':3}[name]
         with self.lock:
-            offset = self.scroll_offsets[pane_index]
+            offset: int = self.scroll_offsets[pane_index]
         visible, offset = self.compute_visible(lines_list, height, offset)
         # update back the clamped offset
         with self.lock:
@@ -132,36 +140,42 @@ class Tui:
 
 
     #region API used by your compiler to append data
-    def log_source(self, line):
+    def log_source(self, line: str, end='\n'):
         with self.lock:
-            self.source_buf.write(line + "\n")
+            self.source_buf.write(f'{line}{end}')
             self.scroll_offsets[0] = 0
         self.mark_refresh()
 
-    def log_tokens(self, line):
+    # FIX -> Remove line breaks
+    def log_tokens(self, line: str = '', end='\n', flush=True):
         with self.lock:
-            self.tokens_buf.write(line + "\n")
+            self.tokens_buf.write(f'{line}{end}')
             self.scroll_offsets[1] = 0
-        self.mark_refresh()
+        if flush:
+            self.update()
+        else:
+            self.mark_refresh()
 
-    def log_ir(self, line):
+    def log_ir(self, line: str, end='\n'):
         with self.lock:
-            self.ir_buf.write(line + "\n")
+            self.ir_buf.write(f'{line}{end}')
             self.scroll_offsets[2] = 0
         self.mark_refresh()
 
-    def log_code(self, line):
+    def log_code(self, line: str, end='\n'):
         with self.lock:
-            self.code_buf.write(line + "\n")
+            self.code_buf.write(f'{line}{end}')
             self.scroll_offsets[3] = 0
         self.mark_refresh()
 
     def mark_refresh(self):
-        global need_refresh
         with self.lock:
-            need_refresh = True
+            self.need_refresh = True
     #endregion
 
+    def update(self):
+        if self._live is not None:
+            self._live.update(self.render())
 
     def input_thread(self):
         '''Input handling thread (keyboard only)'''
@@ -181,10 +195,10 @@ class Tui:
                 except:
                     s = ''
                 if s in ('q', '\x03'):  # q or Ctrl-C
-                    running = False
+                    self.running = False
                     break
                 if s in ('1','2','3','4'):
-                    selected_pane = int(s) - 1
+                    self.selected_pane = int(s) - 1
                     self.mark_refresh()
                     continue
                 # j/k and arrows
@@ -196,6 +210,18 @@ class Tui:
                 if s in ('k', '\x1b[A'):  # up (older)
                     with self.lock:
                         self.scroll_offsets[self.selected_pane] += 1
+                    self.mark_refresh()
+                    continue
+                if s in ('J', '\x1b[1;2B'):  # shift + down (newer)
+                    with self.lock:
+                        for i, offset in enumerate(self.scroll_offsets):
+                            self.scroll_offsets[i] = max(0, offset - 1)
+                    self.mark_refresh()
+                    continue
+                if s in ('K', '\x1b[1;2A'):  # shift + up (older)
+                    with self.lock:
+                        for i, offset in enumerate(self.scroll_offsets):
+                            self.scroll_offsets[i] += 1
                     self.mark_refresh()
                     continue
                 if s == 'u':  # page up (older)
@@ -236,50 +262,69 @@ class Tui:
             except Exception:
                 pass
 
-    def run(self):
+    def _run(self, task: Callable[[], None], hold: bool):
         '''Live loop + controlled generator'''
-        # Demo generator limit
-        MAX_GEN = 100  # number of demo lines to generate (change to suit)
-
+        
         # start input reader
         t = threading.Thread(target=self.input_thread, daemon=True)
+        last_update_time = time.time()
         t.start()
         
         with Live(self.render(), console=self.console, refresh_per_second=20, screen=True) as live:
-            count = 0
-            last_update_time = time.time()
-            generation_finished = False
-            
+            self._live = live
+            task()
+
+            self.running = hold
+            # Holds the process after task run.
             while self.running:
-                # generate only up to MAX_GEN
-                if count < MAX_GEN:
-                    self.log_source(f'int x{count} = {count};')
-                    self.log_tokens(f'TOKEN NUM {count}')
-                    self.log_ir(f'(Assign x{count} {count})')
-                    self.log_code(f't{count} = {count}')
-                    count += 1
-                elif not generation_finished:
-                    # mark finished and write a status line
-                    self.log_code(f"--- generation finished ({MAX_GEN} lines). Press 'q' to quit ---")
-                    generation_finished = True
-                
                 # refresh UI only when needed (efficient)
                 if self.need_refresh or (time.time() - last_update_time) > 0.1:
                     with self.lock:
-                        need_refresh = False
-                    live.update(self.render())
+                        self.need_refresh = False
+                    self.update()
                     last_update_time = time.time()
                 
                 time.sleep(0.03)  # keep UI responsive, tune as needed
-        
-        running = False
+
+        self.running = False
         t.join(timeout=0.2)
+
+    def run(self, task: Callable[[], None], hold = False):
+        try:
+            self._run(task, hold)
+        except KeyboardInterrupt:
+            self.running = False
+            print('\nExiting.', file=sys.stderr)
 
 
 if __name__ == '__main__':
-    try:
-        ui = Tui()
-        ui.run()
-    except KeyboardInterrupt:
-        running = False
-        print('\nExiting.')
+    ui = Tui()
+    def f():
+        # Demo generator limit
+        MAX_GEN = 100  # number of demo lines to generate (change to suit)
+        count = 0
+        last_update_time = time.time()
+        generation_finished = False
+
+        while ui.running:
+            # generate only up to MAX_GEN
+            if count < MAX_GEN:
+                ui.log_source(f'int x{count} = {count};')
+                ui.log_tokens(f'TOKEN NUM {count}')
+                ui.log_ir(f'(Assign x{count} {count})')
+                ui.log_code(f't{count} = {count}')
+                count += 1
+            elif not generation_finished:
+                # mark finished and write a status line
+                ui.log_code(f"--- generation finished ({MAX_GEN} lines). Press 'q' to quit ---")
+                generation_finished = True
+            
+            # refresh UI only when needed (efficient)
+            if ui.need_refresh or (time.time() - last_update_time) > 0.1:
+                with ui.lock:
+                    ui.need_refresh = False
+                ui.update()
+                last_update_time = time.time()
+            
+            time.sleep(0.03)  # keep UI responsive, tune as needed
+    ui.run(f)
