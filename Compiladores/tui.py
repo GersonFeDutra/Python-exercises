@@ -3,7 +3,7 @@
 Rich 2x2 live UI with keyboard-controlled per-pane scrolling.
 Demo generator now stops after MAX_GEN lines so you can test interactively.
 """
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 from rich.console import Console
 from rich.panel import Panel
 from rich.layout import Layout
@@ -127,6 +127,48 @@ class Tui:
         if not text:
             return []
         return text.rstrip("\n").split("\n")
+    
+    @staticmethod
+    def process_carriage_returns(text: str) -> List[str]:
+        """Process text with carriage returns by overwriting previous content."""
+        if not text:
+            return []
+        
+        lines = []
+        current_line = ""
+        
+        i = 0
+        while i < len(text):
+            if text[i] == '\r':
+                # Carriage return - move to beginning of line
+                # Check if next character is newline
+                if i + 1 < len(text) and text[i + 1] == '\n':
+                    # \r\n sequence - treat as newline
+                    lines.append(current_line)
+                    current_line = ""
+                    i += 2
+                    continue
+                else:
+                    # Just \r - start new line, overwriting current
+                    # Actually, for TUI we want to clear the current line
+                    # and start accumulating from beginning
+                    current_line = ""
+                    i += 1
+            elif text[i] == '\n':
+                # Newline - save current line and start new one
+                lines.append(current_line)
+                current_line = ""
+                i += 1
+            else:
+                current_line += text[i]
+                i += 1
+        
+        # Add any remaining content
+        if current_line:
+            lines.append(current_line)
+        
+        # Remove empty strings from the list
+        return [line for line in lines if line != ""]
 
     def compute_visible(self, lines: list[str], pane_height: int, offset: int):
         """
@@ -172,7 +214,7 @@ class Tui:
 
         # Calculate pane height
         if size and hasattr(size, "height"):
-            height = size.height
+            height = size.height  # type: ignore
         else:
             # Estimate height based on console size and mode
             console_height = self.console.size.height
@@ -181,9 +223,9 @@ class Tui:
             elif self.mode == Tui.Mode.CODE_GEN:
                 # Half of main area for upper/lower, then split between panes
                 main_height = console_height - max(4, int(console_height * 0.25))
-                height = max(6, main_height // 2)
+                height = max(6, main_height)
             else:
-                height = max(10, console_height // 2)
+                height = max(10, console_height)
 
         with self.lock:
             offset: int = self.scroll_offsets[pane_index]
@@ -228,27 +270,41 @@ class Tui:
             self.layout = self.build_layout()
             self.last_console_size = self.console.size
 
-        # Update all panels
+        # Update all panels - ALL text panels need carriage return processing
         self.layout["source"].update(
             self.render_box(
                 "source", self.lines_of(self.source_buf.getvalue()), syntax=True
             )
         )
+        
+        # Process tokens with carriage returns
+        tokens_text = self.tokens_buf.getvalue()
+        tokens_lines = self.process_carriage_returns(tokens_text)
         self.layout["tokens"].update(
-            self.render_box("tokens", self.lines_of(self.tokens_buf.getvalue()))
+            self.render_box("tokens", tokens_lines)
         )
 
         if self.mode >= Tui.Mode.PARSER:
+            # Process IR with carriage returns
+            ir_text = self.ir_buf.getvalue()
+            ir_lines = self.process_carriage_returns(ir_text)
             self.layout["ir"].update(
-                self.render_box("ir", self.lines_of(self.ir_buf.getvalue()))
+                self.render_box("ir", ir_lines)
             )
+            
+            # Process log with carriage returns
+            log_text = self.log_buf.getvalue()
+            log_lines = self.process_carriage_returns(log_text)
             self.layout["log"].update(
-                self.render_box("log", self.lines_of(self.log_buf.getvalue()))
+                self.render_box("log", log_lines)
             )
 
         if self.mode >= Tui.Mode.CODE_GEN:
+            # Process code with carriage returns
+            code_text = self.code_buf.getvalue()
+            code_lines = self.process_carriage_returns(code_text)
             self.layout["code"].update(
-                self.render_box("code", self.lines_of(self.code_buf.getvalue()))
+                self.render_box("code", code_lines)
             )
 
         return self.layout
@@ -377,17 +433,20 @@ class Tui:
                         name = ["source", "tokens", "ir", "code", "log"][
                             self.selected_pane
                         ]
-                        lines = (
-                            {
-                                "source": self.source_buf,
-                                "tokens": self.tokens_buf,
-                                "ir": self.ir_buf,
-                                "code": self.code_buf,
-                                "log": self.log_buf,
+                        if name in ["tokens", "ir", "code", "log"]:
+                            # These need carriage return processing
+                            text = {
+                                "tokens": self.tokens_buf.getvalue(),
+                                "ir": self.ir_buf.getvalue(),
+                                "code": self.code_buf.getvalue(),
+                                "log": self.log_buf.getvalue(),
                             }[name]
-                            .getvalue()
-                            .splitlines()
-                        )
+                            lines = self.process_carriage_returns(text)
+                            line_count = len(lines)
+                        else:
+                            # Source pane
+                            lines = self.source_buf.getvalue().splitlines()
+                            line_count = len(lines)
                         size = self.console.size
                         # Estimate pane height based on console size and mode
                         if name == "log":
@@ -403,7 +462,7 @@ class Tui:
                         else:
                             h = max(10, size.height // 2)
                         usable = max(h - 2, 1)
-                        max_off = max(0, len(lines) - usable)
+                        max_off = max(0, line_count - usable)
                         self.scroll_offsets[self.selected_pane] = max_off
                     self.mark_refresh()
                     continue
@@ -457,38 +516,34 @@ class Tui:
 
 
 if __name__ == "__main__":
-    ui = Tui()
+    ui = Tui(mode=Tui.Mode.LEXER)
 
     def f():
-        # Demo generator limit
-        MAX_GEN = 100  # number of demo lines to generate (change to suit)
-        count = 0
-        last_update_time = time.time()
-        generation_finished = False
+        # Simulate lexer output with carriage returns
+        test_lines = [
+            "int x = 10;",
+            "float y = 20.5;",
+            "bool flag = true;",
+            "char c = 'a';",
+        ]
+        
+        for i, line in enumerate(test_lines):
+            ui.log_source(line)
+            # Simulate lexer output with line numbers and carriage returns
+            ui.log_tokens("\r", end="", flush=True)
+            ui.log_tokens(f"{i+1:3}: ", end="", flush=True)
+            if "int" in line:
+                ui.log_tokens("<TYPE, int> <ID, x> <'='> <NUM, 10> <';'> ", end="")
+            elif "float" in line:
+                ui.log_tokens("<TYPE, float> <ID, y> <'='> <NUM, 20> <'.'> <NUM, 5> <';'> ", end="")
+            elif "bool" in line:
+                ui.log_tokens("<TYPE, bool> <ID, flag> <'='> <TRUE> <';'> ", end="")
+            elif "char" in line:
+                ui.log_tokens("<TYPE, char> <ID, c> <'='> <'a'> <';'> ", end="")
+            ui.log_tokens("", end="\n")  # End the line
+            
+            time.sleep(0.5)
 
-        while ui.running:
-            # generate only up to MAX_GEN
-            if count < MAX_GEN:
-                ui.log_source(f"int x{count} = {count};")
-                ui.log_tokens(f"TOKEN NUM {count}")
-                ui.log_ir(f"(Assign x{count} {count})")
-                ui.log_code(f"t{count} = {count}")
-                ui.log_debug(f"Generated line {count}")
-                count += 1
-            elif not generation_finished:
-                # mark finished and write a status line
-                ui.log_code(
-                    f"--- generation finished ({MAX_GEN} lines). Press 'q' to quit ---"
-                )
-                generation_finished = True
+        ui.log_debug("Lexer finished parsing")
 
-            # refresh UI only when needed (efficient)
-            if ui.need_refresh or (time.time() - last_update_time) > 0.1:
-                with ui.lock:
-                    ui.need_refresh = False
-                ui.update()
-                last_update_time = time.time()
-
-            time.sleep(0.03)  # keep UI responsive, tune as needed
-
-    ui.run(f)
+    ui.run(f, hold=True)

@@ -74,6 +74,9 @@ class Lexer:
         self._init_id_table()
         # TODO -> detect empty lines: <https://chatgpt.com/g/g-p-6917e068d6c481918f28825411103d8c-compilers/c/69374318-686c-8330-a4db-d750c2e61e83>
         # self._line_emitted_token = False
+        # Logs Line Numbers
+        self._log_ln: bool = not isinstance(istream, TuiInputStream)
+        self._logged_token: bool = False
 
     def _init_id_table(self):
         self._id_table = {
@@ -123,8 +126,14 @@ class Lexer:
         # region 1. Conta o número de linhas, ignorando os espaços em branco
         while self._peek.isspace():
             if self._peek == "\n":
-                self._log()
-                self._log(f"Linha {self._line}: ", end="")
+                if self._logged_token:
+                    self._log()
+                    self._logged_token = False
+                else:
+                    #if self._log_ln:
+                    self._log("\r", end="", flush=True)
+                #if self._log_ln:
+                self._log(f"{self._line:3}: ", end="", flush=True)
             self._peek = self._get_next_char()
         # endregion
 
@@ -151,6 +160,7 @@ class Lexer:
             if self._peek != ".":
                 num = int(num_str)
                 self._log(f"<NUM, {num}> ", end="")
+                self._logged_token = True
                 return Num(num)
             # endregion
             else:
@@ -181,6 +191,7 @@ class Lexer:
                     self._log(f"<{token_found.tag.name}, {token_found.name}> ", end="")
                 else:
                     self._log(f"<{token_found.tag.name}> ", end="")
+                self._logged_token = True
                 return token_found
 
             # se o identificador não estiver na tabela, cria um novo
@@ -188,6 +199,7 @@ class Lexer:
                 new_id = Id(id_str)
                 self._id_table[id_str] = new_id
                 self._log(f"<ID, {new_id.name}> ", end="")
+                self._logged_token = True
                 return new_id
         # endregion
 
@@ -201,16 +213,18 @@ class Lexer:
             return self.scan()  # ignora caracteres em branco
         else:
             self._log(f"<'{t_oper.tag}'> ", end="")
+            self._logged_token = True
         self._peek = self._get_next_char()
         # endregion
 
         return t_oper
 
     def start(self):
-        self._log("Linha 1: ", end="")
+        #if self._log_ln:
+        self._log("  1: ", end="")
         while self._peek != "":
             self.scan()
-        self._log()
+        self._log("\r    ")
 
 
 class Token:

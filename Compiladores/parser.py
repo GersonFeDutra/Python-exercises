@@ -223,6 +223,7 @@ class Parser:
             # rval -> expr
             self._log(f"{id}=", end="", flush=True)  # ação semântica
             self.opers()
+            self._log('')
 
     def queue_empty(self) -> bool:
         """Checks if the id_queue is empty."""
