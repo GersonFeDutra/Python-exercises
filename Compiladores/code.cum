@@ -1,15 +1,12 @@
 #!./lexer.py
 {
-    /* 6 + 9 - 42 */
+    /* 6 + 9 - 42 */  # TODO -> standalone-expression warning
     
-    # z : bool
+    z : bool
 
-    # TODO -> comma separated declarations
-    # a, b : int  # Supports multi-line declarations
-    a: int
-    b: int
+    a, b : int  # single-line multiple declarations
 
-    # /* /* */ */ # TODO -> nested comments
+    /* /* /*/ */* */ */ # nested comments
 
     # TODO -> Captures
     # [a]
@@ -19,9 +16,9 @@
         b = 2 + 3
 
         a = 3
-        + 2
-        
-        # TODO -> multi-line joints
+        + 2  # TODO -> line discontinuity
+
+        # TODO -> line continuation
         #a = 3\
         #    + 2
         

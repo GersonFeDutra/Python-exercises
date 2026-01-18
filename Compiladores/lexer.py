@@ -143,10 +143,17 @@ class Lexer:
                 self._peek = self._get_next_char()
 
         if self._peek == "/" and self._istream.peek() == "*":
-            while self._peek != "*" or self._istream.peek() != "/":
+            nesting = 1
+            while nesting > 0:
+                while self._peek != "*" or self._istream.peek() != "/":
+                    self._peek = self._get_next_char()
+                    if self._peek == "/" and self._istream.peek() == "*":
+                        nesting += 1
+                        self._peek = self._get_next_char()
+                        self._peek = self._get_next_char()
+                nesting -= 1
                 self._peek = self._get_next_char()
-            self._get_next_char()
-            self._peek = self._get_next_char()
+                self._peek = self._get_next_char()
         # endregion
 
         # region 2. Trata números

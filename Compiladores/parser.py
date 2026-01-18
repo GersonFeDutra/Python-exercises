@@ -155,7 +155,7 @@ class Parser:
                 self.match(Tag(","))
             else:
                 break
-            ret = self._lookahead.tag != Tags.ID
+            ret = self._lookahead.tag == Tags.ID
         # Not a left-value
         return ret
 
