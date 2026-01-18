@@ -183,7 +183,7 @@ class Tui:
         offset = max(0, min(offset, max(0, total - usable)))
         # start index for visible slice
         start = max(0, total - usable - offset)
-        return lines[start : start + usable], offset
+        return lines[start : start + usable], offset, start
 
     def render_box(self, name: str, lines_list: list[str], syntax=False):
         # Check if console was resized and rebuild layout if needed
@@ -230,18 +230,27 @@ class Tui:
         with self.lock:
             offset: int = self.scroll_offsets[pane_index]
 
-        visible, offset = self.compute_visible(lines_list, height, offset)
-
-        # Update back the clamped offset
-        with self.lock:
-            self.scroll_offsets[pane_index] = offset
-
         if syntax:
+            # For source panel, we need to compute visible lines and their starting line number
+            visible, offset, start_index = self.compute_visible(lines_list, height, offset)
+            
+            # Update back the clamped offset
+            with self.lock:
+                self.scroll_offsets[pane_index] = offset
+            
             content = "\n".join(visible)
-            syn = Syntax(content, "c", theme=self.theme, line_numbers=True)
+            # Set start_line to the actual line number in the source file (1-indexed)
+            start_line = start_index + 1
+            syn = Syntax(content, "c", theme=self.theme, line_numbers=True, start_line=start_line)
             style = "bold cyan" if self.selected_pane == 0 else "cyan"
             return Panel(syn, title="Source", border_style=style)
         else:
+            visible, offset, _ = self.compute_visible(lines_list, height, offset)
+            
+            # Update back the clamped offset
+            with self.lock:
+                self.scroll_offsets[pane_index] = offset
+
             title = {
                 "tokens": "Tokens",
                 "ir": "IR",
@@ -516,34 +525,114 @@ class Tui:
 
 
 if __name__ == "__main__":
-    ui = Tui(mode=Tui.Mode.LEXER)
+    ui = Tui(mode=Tui.Mode.CODE_GEN)
 
     def f():
-        # Simulate lexer output with carriage returns
-        test_lines = [
-            "int x = 10;",
-            "float y = 20.5;",
-            "bool flag = true;",
-            "char c = 'a';",
+        # Simulate a compiler pipeline with all panels
+        source_code = [
+            "// Sample program",
+            "int main() {",
+            "    int x = 5;",
+            "    int y = x * 2;",
+            "    float z = 3.14;",
+            "    if (y > 10) {",
+            "        return 1;",
+            "    }",
+            "    return 0;",
+            "}"
         ]
         
-        for i, line in enumerate(test_lines):
+        tokens = [
+            "<TYPE, int> <ID, main> <'('> <')'> <'{'>",
+            "<TYPE, int> <ID, x> <'='> <NUM, 5> <';'>",
+            "<TYPE, int> <ID, y> <'='> <ID, x> <'*'> <NUM, 2> <';'>",
+            "<TYPE, float> <ID, z> <'='> <NUM, 3> <'.'> <NUM, 14> <';'>",
+            "<'if'> <'('> <ID, y> <'>'> <NUM, 10> <')'> <'{'>",
+            "<'return'> <NUM, 1> <';'>",
+            "<'}'>,"
+            "<'return'> <NUM, 0> <';'>",
+            "<'}'>",
+        ]
+        
+        ir_code = [
+            "function main:",
+            "  entry:",
+            "    %1 = alloca i32",
+            "    %2 = alloca i32",
+            "    %3 = alloca float",
+            "    store i32 5, i32* %1",
+            "    %4 = load i32, i32* %1",
+            "    %5 = mul i32 %4, 2",
+            "    store i32 %5, i32* %2",
+            "    store float 3.140000, float* %3",
+            "    %6 = load i32, i32* %2",
+            "    %7 = icmp sgt i32 %6, 10",
+            "    br i1 %7, label %if_true, label %if_end",
+            "  if_true:",
+            "    ret i32 1",
+            "  if_end:",
+            "    ret i32 0"
+        ]
+        
+        asm_code = [
+            "main:",
+            "    push rbp",
+            "    mov rbp, rsp",
+            "    sub rsp, 16",
+            "    mov DWORD [rbp-4], 5      ; x = 5",
+            "    mov eax, DWORD [rbp-4]",
+            "    imul eax, eax, 2",
+            "    mov DWORD [rbp-8], eax    ; y = x * 2",
+            "    mov DWORD [rbp-12], 0x4048f5c3 ; z = 3.14",
+            "    mov eax, DWORD [rbp-8]",
+            "    cmp eax, 10",
+            "    jle .L2",
+            "    mov eax, 1",
+            "    jmp .L3",
+            ".L2:",
+            "    mov eax, 0",
+            ".L3:",
+            "    leave",
+            "    ret"
+        ]
+        
+        # Log source code
+        for i, line in enumerate(source_code):
             ui.log_source(line)
-            # Simulate lexer output with line numbers and carriage returns
-            ui.log_tokens("\r", end="", flush=True)
-            ui.log_tokens(f"{i+1:3}: ", end="", flush=True)
-            if "int" in line:
-                ui.log_tokens("<TYPE, int> <ID, x> <'='> <NUM, 10> <';'> ", end="")
-            elif "float" in line:
-                ui.log_tokens("<TYPE, float> <ID, y> <'='> <NUM, 20> <'.'> <NUM, 5> <';'> ", end="")
-            elif "bool" in line:
-                ui.log_tokens("<TYPE, bool> <ID, flag> <'='> <TRUE> <';'> ", end="")
-            elif "char" in line:
-                ui.log_tokens("<TYPE, char> <ID, c> <'='> <'a'> <';'> ", end="")
-            ui.log_tokens("", end="\n")  # End the line
-            
-            time.sleep(0.5)
-
-        ui.log_debug("Lexer finished parsing")
+            ui.log_debug(f"Processing line {i+1}...")
+            time.sleep(0.1)
+        
+        # Log tokens with carriage returns (simulating lexer)
+        ui.log_debug("\nStarting tokenization...")
+        for i, token_line in enumerate(tokens):
+            if i % 2 == 0:
+                ui.log_tokens(f"\rTokenizing... {i+1}/{len(tokens)}", end="", flush=True)
+            else:
+                ui.log_tokens(f"\rTokenized: {token_line}")
+            time.sleep(0.05)
+        
+        # Log IR code
+        ui.log_debug("\nGenerating intermediate representation...")
+        for i, ir_line in enumerate(ir_code):
+            ui.log_ir(ir_line)
+            if i % 3 == 0:
+                ui.log_debug(f"\rIR generation: {i+1}/{len(ir_code)} lines", end="", flush=True)
+            time.sleep(0.03)
+        ui.log_debug("\rIR generation complete!")
+        
+        # Log assembly code
+        ui.log_debug("\nGenerating assembly code...")
+        for i, asm_line in enumerate(asm_code):
+            ui.log_code(asm_line)
+            if i % 4 == 0:
+                ui.log_debug(f"\rCode generation: {i+1}/{len(asm_code)} lines", end="", flush=True)
+            time.sleep(0.02)
+        ui.log_debug("\rCode generation complete!")
+        
+        # Final status
+        ui.log_debug("\n" + "="*50)
+        ui.log_debug("Compilation successful!")
+        ui.log_debug("Use keys 1-5 to select panes, j/k to scroll, q to quit")
+        ui.log_debug("Try 'g' to go to top, 'G' to go to bottom of selected pane")
 
     ui.run(f, hold=True)
