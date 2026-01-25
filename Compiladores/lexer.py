@@ -56,6 +56,69 @@ class Tags:
     # PTR = Tag(265, 'PTR')
 
 
+class Token:
+    def __init__(self, tag: Tag | str | int):
+        if isinstance(tag, int):
+            self.tag = Tag(tag, chr(tag) if 32 <= tag <= 126 else f"TAG_{tag}")
+        elif isinstance(tag, str):
+            if tag == "":
+                self.tag = Tag(0, tag)
+            else:
+                self.tag = Tag(ord(tag), tag)
+        else:
+            assert isinstance(tag, Tag), f"{tag}"
+            self.tag = tag
+
+    def __eq__(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, value: Tag | str
+    ) -> bool:
+        return (
+            isinstance(value, Tag)
+            and self.tag == value
+            or isinstance(value, str)
+            and self.tag.name == value
+        )
+
+    def __ne__(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, value: Tag | str
+    ) -> bool:
+        return (
+            isinstance(value, Tag)
+            and self.tag != value
+            or isinstance(value, str)
+            and self.tag.name != value
+        )
+
+    def __str__(self) -> str:
+        return str(self.tag)
+
+
+class Id(Token):
+    name: str
+
+    def __init__(self, name: str):
+        super().__init__(Tags.ID)
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Type(Token):
+    def __init__(self, name: str):
+        super().__init__(Tags.TYPE)
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Num(Token):
+    def __init__(self, value: int):
+        super().__init__(Tags.NUM)
+        self.value = value
+
+
 class Lexer:
     _id_table: dict[str, "Token | Id | Type"] = {}
     line = property(
@@ -254,69 +317,6 @@ class Lexer:
     def finish(self):
         if not self._logged_token:
             self._log("\r    ")
-
-
-class Token:
-    def __init__(self, tag: Tag | str | int):
-        if isinstance(tag, int):
-            self.tag = Tag(tag, chr(tag) if 32 <= tag <= 126 else f"TAG_{tag}")
-        elif isinstance(tag, str):
-            if tag == "":
-                self.tag = Tag(0, tag)
-            else:
-                self.tag = Tag(ord(tag), tag)
-        else:
-            assert isinstance(tag, Tag), f"{tag}"
-            self.tag = tag
-
-    def __eq__(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, value: Tag | str
-    ) -> bool:
-        return (
-            isinstance(value, Tag)
-            and self.tag == value
-            or isinstance(value, str)
-            and self.tag.name == value
-        )
-
-    def __ne__(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, value: Tag | str
-    ) -> bool:
-        return (
-            isinstance(value, Tag)
-            and self.tag != value
-            or isinstance(value, str)
-            and self.tag.name != value
-        )
-
-    def __str__(self) -> str:
-        return str(self.tag)
-
-
-class Id(Token):
-    name: str
-
-    def __init__(self, name: str):
-        super().__init__(Tags.ID)
-        self.name = name
-
-    def __str__(self) -> str:
-        return self.name
-
-
-class Type(Token):
-    def __init__(self, name: str):
-        super().__init__(Tags.TYPE)
-        self.name = name
-
-    def __str__(self) -> str:
-        return self.name
-
-
-class Num(Token):
-    def __init__(self, value: int):
-        super().__init__(Tags.NUM)
-        self.value = value
 
 
 def show_help():
