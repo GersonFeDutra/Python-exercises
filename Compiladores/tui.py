@@ -177,7 +177,7 @@ class Tui:
         offset == 0 => show bottom-most lines
         offset > 0 => show older lines (scrolled up)
         """
-        usable = max(pane_height - 2, 1)  # reserve for borders/title
+        usable = max(pane_height - 2, 0)  # reserve for borders/title
         total = len(lines)
         # clamp offset
         offset = max(0, min(offset, max(0, total - usable)))
@@ -191,31 +191,11 @@ class Tui:
             self.layout = self.build_layout()
             self.last_console_size = self.console.size
 
-        # Get layout size for this pane
-        try:
-            # For nested layouts in CODE_GEN mode
-            if self.mode == Tui.Mode.CODE_GEN and name in [
-                "source",
-                "tokens",
-                "ir",
-                "code",
-            ]:
-                if name in ["source", "tokens"]:
-                    size = self.layout["main"]["upper"][name].size
-                else:
-                    size = self.layout["main"]["lower"][name].size
-            else:
-                size = self.layout[name].size
-        except:
-            # Fallback for any layout access issues
-            size = None
-
         pane_index = {"source": 0, "tokens": 1, "ir": 2, "code": 3, "log": 4}[name]
 
+
         # Calculate pane height
-        if size and hasattr(size, "height"):
-            height = size.height  # type: ignore
-        else:
+        if self.layout.map.get(self.layout[name]) is None:
             # Estimate height based on console size and mode
             console_height = self.console.size.height
             if name == "log":
@@ -226,6 +206,8 @@ class Tui:
                 height = max(6, main_height)
             else:
                 height = max(10, console_height)
+        else:
+            height = self.layout.map[self.layout[name]].region.height
 
         with self.lock:
             offset: int = self.scroll_offsets[pane_index]

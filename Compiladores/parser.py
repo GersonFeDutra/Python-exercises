@@ -45,6 +45,7 @@ class Parser:
         """Inicia o processo de análise lendo o primeiro token."""
         self._lookahead = self._lexer.scan()
         self.program()
+        self._lexer.finish()
 
         # Verifica se o último caractere é o marcador vazio (nil ⇒ EOF)
         if self._lookahead != "":

@@ -107,6 +107,22 @@ class Lexer:
         with open(filename, "r") as file:
             self._source_code = file.read()
 
+    def _nesting_comment(self, symbols: str):
+        """Trata comentários aninhados
+        symbols: str -> tipo de comentário: '#<>#' ou '/**/'
+        """
+        nesting = 1
+        while nesting > 0:
+            while self._peek != symbols[2] or self._istream.peek() != symbols[3]:
+                self._peek = self._get_next_char()
+                if self._peek == symbols[0] and self._istream.peek() == symbols[1]:
+                    nesting += 1
+                    self._peek = self._get_next_char()
+                    self._peek = self._get_next_char()
+            nesting -= 1
+            self._peek = self._get_next_char()
+            self._peek = self._get_next_char()
+
     def _get_next_char(self):
         """Simula o cin.get() lendo da string armazenada"""
         # Implementação do método para obter o próximo caractere do código fonte
@@ -121,39 +137,39 @@ class Lexer:
             return char
         return ""  # Fim da entrada
 
+    def _log_line_number(self):
+        if self._logged_token:
+            self._log()
+            self._logged_token = False
+        else:
+            #if self._log_ln:
+            self._log("\r", end="", flush=True)
+        #if self._log_ln:
+        self._log(f"{self._line:3}: ", end="", flush=True)
+
     def scan(self):
         """Implementação do método de varredura (scan) do lexer."""
         # region 1. Conta o número de linhas, ignorando os espaços em branco
         while self._peek.isspace():
             if self._peek == "\n":
-                if self._logged_token:
-                    self._log()
-                    self._logged_token = False
-                else:
-                    #if self._log_ln:
-                    self._log("\r", end="", flush=True)
-                #if self._log_ln:
-                self._log(f"{self._line:3}: ", end="", flush=True)
+                self._log_line_number()
             self._peek = self._get_next_char()
         # endregion
 
         # region 2. Ignora comentários [ #...\n and /*...*/ ]
         if self._peek == "#":
-            while self._peek != "\n" and self._peek != "":
-                self._peek = self._get_next_char()
-
-        if self._peek == "/" and self._istream.peek() == "*":
-            nesting = 1
-            while nesting > 0:
-                while self._peek != "*" or self._istream.peek() != "/":
+            if self._istream.peek() == "<":
+                self._nesting_comment("#<>#")
+            else:
+                while self._peek != "\n" and self._peek != "":
                     self._peek = self._get_next_char()
-                    if self._peek == "/" and self._istream.peek() == "*":
-                        nesting += 1
-                        self._peek = self._get_next_char()
-                        self._peek = self._get_next_char()
-                nesting -= 1
-                self._peek = self._get_next_char()
-                self._peek = self._get_next_char()
+
+        if self._peek == "/":
+            if self._istream.peek() == "/":
+                while self._peek != "\n" and self._peek != "":
+                    self._peek = self._get_next_char()
+            elif self._istream.peek() == "*":
+                self._nesting_comment("/**/")
         # endregion
 
         # region 2. Trata números
@@ -215,6 +231,8 @@ class Lexer:
         if t_oper.tag.name == "":
             return t_oper  # EOF
         if t_oper.tag.name in [" ", "\r", "\n", "\t"]:
+            if self._peek == "\n":
+                self._log_line_number()
             # TODO -> better account for line breaker
             self._peek = self._get_next_char()
             return self.scan()  # ignora caracteres em branco
@@ -231,7 +249,11 @@ class Lexer:
         self._log("  1: ", end="")
         while self._peek != "":
             self.scan()
-        self._log("\r    ")
+        self.finish()
+
+    def finish(self):
+        if not self._logged_token:
+            self._log("\r    ")
 
 
 class Token:

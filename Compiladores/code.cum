@@ -1,6 +1,5 @@
 #!./lexer.py
 {
-    /* 6 + 9 - 42 */  # TODO -> standalone-expression warning
     
     z : bool
 
@@ -32,10 +31,9 @@
         cout << 10 << " "
     }
     */
+    
+    #< Also supports this format.
+    Could be used as annotation-blocks in the future.
+    >#
 
-    /*
-    x : *char
-    x = &a
-    @x
-    */
 }

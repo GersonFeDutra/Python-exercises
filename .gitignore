@@ -2,7 +2,10 @@ snippets/
 docs/
 .vscode/
 playground/
-*__pycache__/
+__pycache__
+__pycache__/
+venv*
+venv/
 CursoemVideo/.idea/
 CursoemVideo/2020/world_1/build/
 *.pdf
