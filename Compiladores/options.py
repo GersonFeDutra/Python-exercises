@@ -2,7 +2,7 @@ class Options:
     NONE = 0
     LEXER = 1  # Stop on Lexer
     LOG = 2  # Log to stderr
-    OPTIMIZE = 4  # Optimize parser: use accumulator
+    NO_OPTIMIZE = 4  # Optimize parser: use accumulator
 
     def __or__(self, other) -> int:
         return self.value | other.value

@@ -29,7 +29,6 @@ def show_help():
 if __name__ == "__main__":
     # region Options
     options: int = Options.NONE  # type: ignore
-    optimize = True  # Allows to use an accumulator to process result directly
     # endregion
 
     # region 1. Verifica se o usuário passou o nome do arquivo
@@ -41,6 +40,7 @@ if __name__ == "__main__":
     # region 2. Verifica se foram passadas opções
     elif len(sys.argv) > 2:
         for i in range(2, len(sys.argv)):
+            # TODO -> Grouped options parsing
             if sys.argv[i] in ["-?", "--help"]:
                 show_help()
                 sys.exit()
@@ -50,7 +50,8 @@ if __name__ == "__main__":
             if sys.argv[i] in ["-!", "--log"]:
                 options |= Options.LOG
             if sys.argv[i] in ["-no", "--no-optimize"]:
-                optimize |= Options.OPTIMIZE
+                # Allows the parser to use an accumulator to process results directly
+                options |= Options.NO_OPTIMIZE
     # endregion
 
     source_filename = sys.argv[1]
@@ -64,17 +65,6 @@ if __name__ == "__main__":
     # endregion
 
     # region Full compiler
-    # Equivalente ao main() do postfix.cpp
-    from parser import Parser, ParseError
-
-    try:
-        # region 3. Inicia o Parser com o conteúdo do arquivo
-        tradutor = Parser(source_filename, options)
-        tradutor.start()
-        print()
-        # endregion
-    except FileNotFoundError:
-        log_error(f"Erro: O arquivo '{source_filename}' não foi encontrado.")
-    except ParseError:
-        log_error("\nErro de Sintaxe")
+    import parser
+    parser.main(source_filename, options)
     # endregion

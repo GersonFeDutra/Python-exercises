@@ -356,7 +356,7 @@ def main(source_filename: str, options: int, *args, **kwargs):
             lambda message, *args, **kwargs: tui.log_debug(
                 f"\033[33m{message}", *args, **kwargs
             ),
-            optimize=bool(options & Options.OPTIMIZE),
+            optimize=not bool(options & Options.NO_OPTIMIZE),
         )
         tui.run(parser.start, True)
     else:
@@ -370,7 +370,7 @@ def main(source_filename: str, options: int, *args, **kwargs):
             lambda *args, **kwargs: None,
         )
         # Inicia o Parser com o conteúdo do arquivo
-        parser = Parser(lexer, optimize=bool(options & Options.OPTIMIZE))
+        parser = Parser(lexer, optimize=bool(options & Options.NO_OPTIMIZE))
         parser.start()
         parser._log()  # quebra de linha final
 
@@ -389,4 +389,4 @@ if __name__ == "__main__":
         )
         sys.exit(EXIT_ERROR)
 
-    main(source_filename=sys.argv[1], options=Options.OPTIMIZE | Options.LOG)
+    main(source_filename=sys.argv[1], options=Options.NO_OPTIMIZE | Options.LOG)
