@@ -4,22 +4,24 @@
     z : bool
 
     a, b : int  # single-line multiple declarations
+    
+    # TODO -> single-line multiple assignments
+    #a, b = 1, 2
 
     /* /* /*/ */* */ */ # nested comments
 
     # TODO -> Captures
     # [a]
     {
-        b : bool
-        a : bool
-        b = 2 + 3
+        # single-line multiple expressions
+        b : bool; a : bool; b = 2 + 3
 
         a = 3
-        + 2  # TODO -> line discontinuity
+        + 2
 
-        # TODO -> line continuation
-        #a = 3\
-        #    + 2
+        # line continuation
+        a = 3\
+            + 2
         
         # * 4 - 5 / 6
         /* 7 : char */ # ERROR

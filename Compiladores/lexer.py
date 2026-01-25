@@ -236,6 +236,12 @@ class Lexer:
     def scan(self) -> Token | Id | Type | Num:
         """Implementação do método de varredura (scan) do lexer."""
         while True:
+            # region 0. Line continuation
+            if self._peek == "\\" and self._istream.peek() == "\n":
+                self._peek = self._get_next_char()  # consume '\'
+                self._peek = self._get_next_char()  # consume '\n'
+                continue
+
             # region 1. Conta o número de linhas, ignorando os espaços em branco
             while self._peek.isspace():
                 if self._peek == "\n":
@@ -352,7 +358,10 @@ class Lexer:
                 continue
             else:
                 self._log(f"<'{t_oper.tag}'> ", end="")
-                if not (self._logged_token & Lexer.LoggedToken.EXPRESSION):
+                if self._logged_token & Lexer.LoggedToken.EXPRESSION:
+                    if t_oper.tag == ";":
+                        self._log("\n", end="\t")
+                else:
                     self._logged_token |= (
                         Lexer.LoggedToken.BLOCK
                         if t_oper.tag.name in ["{", "}", ",", ";"]
