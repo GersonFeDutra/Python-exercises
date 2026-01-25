@@ -63,26 +63,44 @@ class Parser:
         """Statements
         Regras:
             stmts -> stmt stmts | ϵ
-            stmt -> block | lval_lst declr_or_rval_lst | opers
+            stmt -> block | expr;
         """
         while True:
             # stmt -> block
             if self._lookahead.tag == "{":
                 self.block()
                 continue
-            # stmt -> lval_lst rval_lst
-            if self.lval_lst():
-                if not self.declr_or_rval_lst():
-                    self._warn(
-                        f"[warning] standalone expression at line :{self._lexer.line}."
+            if self.expr():
+                if self._lookahead == ";":
+                    self.match(Tag(";"))
+                else:
+                    raise ParseError(
+                        f"Erro na linha {self._lexer.line}:"
+                        " fim de linha ou ';' esperado."
                     )
-                continue
-            # stmt -> opers
-            if self._lookahead.tag == Tags.NUM:
-                self.opers()
                 continue
             # Produção vazia
             return
+
+    def expr(self) -> bool:
+        """lval_lst declr_or_rval_lst | rval_lst"""
+        # stmt -> lval_lst rval_lst
+        if self.lval_lst():
+            if not self.declr_or_rval_lst():
+                self.clear_queue()
+                if self._lookahead == ";":
+                    self._warn(
+                        f"[warning] standalone expression at line :{self._lexer.line}."
+                    )
+            return True
+        # stmt -> rval_lst
+        if self.rval_lst():
+            if self._lookahead == ";":
+                self._warn(
+                    f"[warning] standalone expression at line :{self._lexer.line}."
+                )
+            return True
+        return False
 
     def block(self):
         """
@@ -163,12 +181,13 @@ class Parser:
     def declr_or_rval_lst(self) -> bool:
         """Expressions
         Regras:
-            declr_or_rval_lst -> : type {
-                                    s = symTable.get(id.lexeme);
-                                    print(id.lexeme); print(':');
-                                    print(s.type);
-                                  }
-                                | = rval_lst | ϵ
+            declr_or_rval_lst -> :
+                type {
+                    s = symTable.get(id.lexeme);
+                    print(id.lexeme); print(':');
+                    print(s.type);
+                }
+                | = rval_lst | ϵ
         """
         if self._lookahead == ":":
             # declr_or_rval_lst -> : type
@@ -211,9 +230,16 @@ class Parser:
         """R-value list
         Regras:
             rval_lst -> rval [, rval_lst]'
-            rval -> expr { id=deque()); print(id'=') }
+            rval -> expr { id=deque()); print(id+'=') }
         """
-        if not self._id_queue:
+        if self.queue_empty():
+            # Standalone expression
+            while self._lookahead.tag == Tags.NUM or self._lookahead in ("+", "-"):
+                self.opers()
+                if self._lookahead == ",":
+                    self.match(Tag(","))
+                else:
+                    return True
             return False
 
         while True:
@@ -224,7 +250,7 @@ class Parser:
             # rval -> expr
             self._log(f"{id}=", end="", flush=True)  # ação semântica
             self.opers()
-            self._log('')
+            self._log("")
 
     def queue_empty(self) -> bool:
         """Checks if the id_queue is empty."""
@@ -239,6 +265,11 @@ class Parser:
         if self.queue_empty():
             return None
         return self._id_queue.get()
+
+    def clear_queue(self):
+        """Clears the id_queue."""
+        while not self.queue_empty():
+            self.deque()
 
     # def decls(self):
     #     '''
@@ -288,19 +319,19 @@ class Parser:
                     return
         else:
             while True:
+                self._log(f"{self.accumulator}", end="", flush=True)
+
                 # Regra: oper -> + digit { print(+) } oper
                 if self._lookahead == "+":
                     self.match(Tag("+"))
-                    self._log(" ", end="", flush=True)
-                    self.digit()
                     self._log("+", end="", flush=True)
+                    self.accumulator = self.digit()
 
                 # Regra: oper -> - digit { print(-) } oper
                 elif self._lookahead == "-":
                     self.match(Tag("-"))
-                    self._log(" ", end="", flush=True)
-                    self.digit()
                     self._log("-", end="", flush=True)
+                    self.accumulator = self.digit()
 
                 # Produção vazia (return)
                 else:
@@ -314,12 +345,18 @@ class Parser:
         """
         Regra: digit -> digit { print(digit) }
         """
+        modifier = 1
+        if self._lookahead == "+":
+            self.match(Tag("+"))
+        elif self._lookahead == "-":
+            self.match(Tag("-"))
+            modifier = -1
         if self._lookahead.tag == Tags.NUM:
             assert isinstance(self._lookahead, Num)
             num: Num = self._lookahead
-            self._lexer._log(f"{self._lookahead}", end=" ", flush=True)
+            # self._lexer._log(f"{self._lookahead}", end=" ", flush=True)
             self.match(self._lookahead.tag)
-            return num.value
+            return num.value * modifier
         else:
             log_error(
                 f"\nErro na linha {self._lexer.line}:"

@@ -122,7 +122,10 @@ class Num(Token):
 class Lexer:
     _id_table: dict[str, "Token | Id | Type"] = {}
     line = property(
-        lambda self: self._line, None, None, "Current line number being parsed."
+        lambda self: self._cached_line,
+        None,
+        None,
+        "Cached line number from witch line is being parsed.",
     )
 
     def __init__(
@@ -131,6 +134,7 @@ class Lexer:
         logger: Callable[..., None] = lambda *args, **kwargs: None,
     ):
         self._line = 1
+        self._cached_line = 1
         self._peek = " "
         self._istream = istream
         self._log = logger
@@ -139,7 +143,12 @@ class Lexer:
         # self._line_emitted_token = False
         # Logs Line Numbers
         self._log_ln: bool = not isinstance(istream, TuiInputStream)
-        self._logged_token: bool = False
+        self._logged_token: int = Lexer.LoggedToken.NONE
+
+    class LoggedToken:
+        NONE = 0
+        EXPRESSION = 1
+        BLOCK = 2
 
     def _init_id_table(self):
         self._id_table = {
@@ -170,14 +179,19 @@ class Lexer:
         with open(filename, "r") as file:
             self._source_code = file.read()
 
-    def _nesting_comment(self, symbols: str):
+    def _nesting_comment(self, symbols: str) -> bool:
         """Trata comentários aninhados
         symbols: str -> tipo de comentário: '#<>#' ou '/**/'
+        returns: True if line break occurs.
         """
+        had_nl = False
         nesting = 1
         while nesting > 0:
             while self._peek != symbols[2] or self._istream.peek() != symbols[3]:
                 self._peek = self._get_next_char()
+                if self._peek == "\n":
+                    had_nl = True
+                    self._peek = self._get_next_char()
                 if self._peek == symbols[0] and self._istream.peek() == symbols[1]:
                     nesting += 1
                     self._peek = self._get_next_char()
@@ -185,6 +199,25 @@ class Lexer:
             nesting -= 1
             self._peek = self._get_next_char()
             self._peek = self._get_next_char()
+        return had_nl
+
+    def _log_line_interrupt(self) -> Token | None:
+        """Deals with line interrupt and returns a semicolon token if an expression was logged."""
+        token: Token | None = None
+        if self._logged_token & Lexer.LoggedToken.EXPRESSION:
+            self._log(f"<;>")
+            self._log(f"{self._line:3}: ", end="", flush=True)
+            self._peek = self._get_next_char()
+            token = Token(";")
+        elif self._logged_token & Lexer.LoggedToken.BLOCK:
+            self._log(f"\n{self._line:3}: ", end="", flush=True)
+            self._cached_line = self._line + 1  # WATCH
+        else:
+            self._log("\r", end="", flush=True)
+            self._log(f"{self._line:3}: ", end="", flush=True)
+            self._cached_line = self._line + 1  # WATCH
+        self._logged_token = Lexer.LoggedToken.NONE
+        return token
 
     def _get_next_char(self):
         """Simula o cin.get() lendo da string armazenada"""
@@ -200,115 +233,138 @@ class Lexer:
             return char
         return ""  # Fim da entrada
 
-    def _log_line_number(self):
-        if self._logged_token:
-            self._log()
-            self._logged_token = False
-        else:
-            #if self._log_ln:
-            self._log("\r", end="", flush=True)
-        #if self._log_ln:
-        self._log(f"{self._line:3}: ", end="", flush=True)
-
-    def scan(self):
+    def scan(self) -> Token | Id | Type | Num:
         """Implementação do método de varredura (scan) do lexer."""
-        # region 1. Conta o número de linhas, ignorando os espaços em branco
-        while self._peek.isspace():
-            if self._peek == "\n":
-                self._log_line_number()
-            self._peek = self._get_next_char()
-        # endregion
-
-        # region 2. Ignora comentários [ #...\n and /*...*/ ]
-        if self._peek == "#":
-            if self._istream.peek() == "<":
-                self._nesting_comment("#<>#")
-            else:
-                while self._peek != "\n" and self._peek != "":
-                    self._peek = self._get_next_char()
-
-        if self._peek == "/":
-            if self._istream.peek() == "/":
-                while self._peek != "\n" and self._peek != "":
-                    self._peek = self._get_next_char()
-            elif self._istream.peek() == "*":
-                self._nesting_comment("/**/")
-        # endregion
-
-        # region 2. Trata números
-        if self._peek.isdigit():
-            # region Inteiros
-            num_str = ""
-            while self._peek.isdigit():
-                num_str += self._peek
+        while True:
+            # region 1. Conta o número de linhas, ignorando os espaços em branco
+            while self._peek.isspace():
+                if self._peek == "\n":
+                    token = self._log_line_interrupt()
+                    if token is not None:
+                        return token
                 self._peek = self._get_next_char()
-
-            if self._peek != ".":
-                num = int(num_str)
-                self._log(f"<NUM, {num}> ", end="")
-                self._logged_token = True
-                return Num(num)
             # endregion
-            else:
-                # region Ponto Flutuante
-                num_str += self._peek
-                self._peek = self._get_next_char()
+
+            # region 2. Trata números
+            if self._peek.isdigit():
+                # region Inteiros
+                num_str = ""
                 while self._peek.isdigit():
                     num_str += self._peek
                     self._peek = self._get_next_char()
+
+                if self._peek != ".":
+                    num = int(num_str)
+                    self._log(f"<NUM, {num}> ", end="")
+                    self._logged_token = True
+                    return Num(num)
                 # endregion
-        # endregion
-
-        # TODO -> Tratar identificadores genéricos de forma diferente de palavras-reservadas
-        # region 3. Trata identificadores e palavras reservadas
-        if self._peek.isalpha():
-            id_str = ""
-            while self._peek.isalpha():
-                id_str += self._peek
-                self._peek = self._get_next_char()
-
-            if id_str in self._id_table:
-                # para debugging
-                token_found: Token | Type | Id = self._id_table[id_str]
-                if token_found is Type:
-                    # self._log(f'<{id_str}> ', end='')
-                    self._log(f"<{token_found.tag.name}, {token_found.name}> ", end="")
-                elif token_found is Id:
-                    self._log(f"<{token_found.tag.name}, {token_found.name}> ", end="")
                 else:
-                    self._log(f"<{token_found.tag.name}> ", end="")
-                self._logged_token = True
-                return token_found
+                    # region Ponto Flutuante
+                    num_str += self._peek
+                    self._peek = self._get_next_char()
+                    while self._peek.isdigit():
+                        num_str += self._peek
+                        self._peek = self._get_next_char()
+                    # endregion
+            # endregion
 
-            # se o identificador não estiver na tabela, cria um novo
+            # TODO -> Tratar identificadores genéricos de forma diferente de palavras-reservadas
+            # region 3. Trata identificadores e palavras reservadas
+            if self._peek.isalpha():
+                id_str = ""
+                while self._peek.isalpha():
+                    id_str += self._peek
+                    self._peek = self._get_next_char()
+
+                if id_str in self._id_table:
+                    # para debugging
+                    token_found: Token | Type | Id = self._id_table[id_str]
+                    if isinstance(token_found, Type) or isinstance(token_found, Id):
+                        # self._log(f'<{id_str}> ', end='')
+                        self._log(
+                            f"<{token_found.tag.name}, {token_found.name}> ", end=""
+                        )
+                    else:
+                        self._log(f"<{token_found.tag.name}> ", end="")
+                    self._logged_token = True
+                    return token_found
+
+                # se o identificador não estiver na tabela, cria um novo
+                else:
+                    new_id = Id(id_str)
+                    self._id_table[id_str] = new_id
+                    self._log(f"<{new_id.tag}, {new_id.name}> ", end="")
+                    self._logged_token = True
+                    return new_id
+            # endregion
+
+            # region 4. Ignora comentários
+            # #...\n and #<...>#
+            if self._peek == "#":
+                if self._istream.peek() == "<":
+                    if self._nesting_comment("#<>#"):
+                        if self._logged_token:
+                            token = self._log_line_interrupt()
+                            if token is not None:
+                                return token
+                        self._peek = self._get_next_char()
+                    continue
+                else:
+                    while self._peek != "\n" and self._peek != "":
+                        self._peek = self._get_next_char()
+                    if self._peek == "\n":
+                        token = self._log_line_interrupt()
+                        if token is not None:
+                            return token
+                        else:
+                            self._peek = self._get_next_char()
+                            continue
+            # //...\n and /*...*/ ]
+            if self._peek == "/":
+                if self._istream.peek() == "/":
+                    while self._peek != "\n" and self._peek != "":
+                        self._peek = self._get_next_char()
+                    if self._peek == "\n":
+                        token = self._log_line_interrupt()
+                        if token is not None:
+                            return token
+                        else:
+                            self._peek = self._get_next_char()
+                            continue
+                elif self._istream.peek() == "*":
+                    if self._nesting_comment("/**/"):
+                        if self._logged_token:
+                            token = self._log_line_interrupt()
+                            if token is not None:
+                                return token
+                        self._peek = self._get_next_char()
+                    continue
+            # endregion
+
+            # region 5. Trata operadores
+            t_oper = Token(self._peek)  # pyright: ignore[reportArgumentType]
+            if t_oper.tag.name == "":
+                return t_oper  # EOF
+            if t_oper.tag.name in [" ", "\r", "\t"]:
+                # TODO -> better account for line breaker
+                self._peek = self._get_next_char()
+                continue
             else:
-                new_id = Id(id_str)
-                self._id_table[id_str] = new_id
-                self._log(f"<ID, {new_id.name}> ", end="")
-                self._logged_token = True
-                return new_id
-        # endregion
-
-        # region 4. Trata operadores
-        t_oper = Token(self._peek)  # pyright: ignore[reportArgumentType]
-        if t_oper.tag.name == "":
-            return t_oper  # EOF
-        if t_oper.tag.name in [" ", "\r", "\n", "\t"]:
-            if self._peek == "\n":
-                self._log_line_number()
-            # TODO -> better account for line breaker
+                self._log(f"<'{t_oper.tag}'> ", end="")
+                if not (self._logged_token & Lexer.LoggedToken.EXPRESSION):
+                    self._logged_token |= (
+                        Lexer.LoggedToken.BLOCK
+                        if t_oper.tag.name in ["{", "}", ",", ";"]
+                        else Lexer.LoggedToken.EXPRESSION
+                    )
             self._peek = self._get_next_char()
-            return self.scan()  # ignora caracteres em branco
-        else:
-            self._log(f"<'{t_oper.tag}'> ", end="")
-            self._logged_token = True
-        self._peek = self._get_next_char()
-        # endregion
+            # endregion
 
-        return t_oper
+            return t_oper
 
     def start(self):
-        #if self._log_ln:
+        # if self._log_ln:
         self._log("  1: ", end="")
         while self._peek != "":
             self.scan()
